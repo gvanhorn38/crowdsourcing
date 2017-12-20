@@ -120,8 +120,9 @@ class CrowdWorker(object):
     def __init__(self, id_, params):
         self.id = id_
         self.params = params
-        self.images = {}  # set of images annotated by this worker, image id to
-        # CrowdImage
+        # set of images annotated by this worker, image id to CrowdImage
+        self.images = {}
+        self.finished = False
         self.encode_exclude = {
             'images': True,
             'params': True,
@@ -567,7 +568,7 @@ class CrowdDataset(object):
         return err / float(num_images)
 
     def load(self, fname, max_assignments=None, sort_annos=False,
-             overwrite_workers=False):
+             overwrite_workers=True):
         """ Load in a dataset json file.
         Args:
           sort_annos (bool): Should the annotations be sorted by timestamp?
@@ -579,12 +580,13 @@ class CrowdDataset(object):
         with open(fname) as f:
             data = json.load(f)
         self.images = {}
-        self.workers = {}
+        if overwrite_workers:
+            self.workers = {}
         if 'dataset' in data:
             self.parse(data['dataset'])
         if 'workers' in data:
             for w in data['workers']:
-                if w not in self.workers or overwrite_workers:
+                if w not in self.workers:
                     self.workers[w] = self._CrowdWorkerClass_(w, self)
                     self.workers[w].parse(data['workers'][w])
         if 'images' in data:

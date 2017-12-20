@@ -297,14 +297,15 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
                                 if worker_label == prev_anno.label:
                                     prob_trust_num += 1.
 
-            self.prob_trust = np.clip(
-                prob_trust_num / float(prob_trust_denom), 0.00000001, 0.9999)
+            self.prob_trust = np.clip(prob_trust_num / float(prob_trust_denom), 0.00000001, 0.9999)
 
     def initialize_parameters(self, avoid_if_finished=False):
         """Pass on the dataset-wide worker skill priors to the workers.
         """
 
         for worker in self.workers.itervalues():
+            if avoid_if_finished and worker.finished:
+                continue
 
             if self.model_worker_trust:
                 worker.prob_trust = self.prob_trust
