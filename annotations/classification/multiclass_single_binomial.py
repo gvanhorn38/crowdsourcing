@@ -32,7 +32,7 @@ import random
 import numpy as np
 
 from ...crowdsourcing import CrowdDataset, CrowdImage, CrowdWorker, CrowdLabel
-
+from ...util.taxonomy import Taxonomy
 
 class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
     """ A dataset for multiclass labeling using a single binomial skill
@@ -101,6 +101,8 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
         self.skill_names = ['Prob Correct']
         if model_worker_trust:
             self.skill_names.append('Prob Trust')
+
+        self.encode_exclude['taxonomy'] = True
 
     def copy_parameters_from(self, dataset, full=True):
         super(CrowdDatasetMulticlassSingleBinomial, self).copy_parameters_from(
@@ -304,8 +306,6 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
 
         for worker in self.workers.itervalues():
 
-            worker.pooled_taxonomy = self.taxonomy
-
             if self.model_worker_trust:
                 worker.prob_trust = self.prob_trust
 
@@ -321,6 +321,19 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
                 worker_node.data['prob'] = node.data['prob']
                 if not node.is_leaf:
                     worker_node.data['prob_correct'] = node.data['prob_correct']
+
+    def parse(self, data):
+        super(CrowdDatasetMulticlassSingleBinomial, self).parse(data)
+        if 'taxonomy_data' in data:
+            self.taxonomy = Taxonomy()
+            self.taxonomy.load(data['taxonomy_data'])
+            self.taxonomy.finalize()
+
+    def encode(self):
+        data = super(CrowdDatasetMulticlassSingleBinomial, self).encode()
+        if self.taxonomy is not None:
+            data['taxonomy_data'] = self.taxonomy.export()
+        return data
 
 
 class CrowdImageMulticlassSingleBinomial(CrowdImage):
@@ -575,19 +588,20 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
     """
     def __init__(self, id_, params):
         super(CrowdWorkerMulticlassSingleBinomial, self).__init__(id_, params)
+
+        # Placeholder for generic skill.
+        self.prob = None
         self.skill = None
 
         # Copy over the global probabilities
         self.taxonomy = None
-        self.pooled_taxonomy = params.taxonomy
+        self.encode_exclude['taxonomy'] = True
 
         if params.model_worker_trust:
             self.prob_trust = params.prob_trust
             self._rec_cache = {}
+            self.encode_exclude['_rec_cache'] = True
 
-        self.did_estimate_params = False
-
-        self.prob = None
 
     def compute_log_likelihood(self):
         """ The log likelihood of the skill.
@@ -668,8 +682,6 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
     def estimate_parameters(self, avoid_if_finished=False):
         """ Estimate the worker skill parameters.
         """
-
-        self.did_estimate_params = True
 
         assert self.taxonomy is not None, "Worker %s's taxonomy was not initialized"
 
@@ -777,6 +789,19 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
             self.prob_trust = np.clip(
                 prob_trust_num / float(prob_trust_denom), 0.00000001, 0.9999)
             self.skill.append(self.prob_trust)
+
+    def parse(self, data):
+        super(CrowdWorkerMulticlassSingleBinomial, self).parse(data)
+        if 'taxonomy_data' in data:
+            self.taxonomy = Taxonomy()
+            self.taxonomy.load(data['taxonomy_data'])
+            self.taxonomy.finalize()
+
+    def encode(self):
+        data = super(CrowdWorkerMulticlassSingleBinomial, self).encode()
+        if self.taxonomy is not None:
+            data['taxonomy_data'] = self.taxonomy.export()
+        return data
 
 
 class CrowdLabelMulticlassSingleBinomial(CrowdLabel):

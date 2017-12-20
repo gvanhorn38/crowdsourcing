@@ -3,7 +3,7 @@ Crowdsourcing tools to construct datasets.
 
 # Dataset Format
 
-## Classification
+## Generic Format
 ```
 {
     dataset : {
@@ -29,16 +29,41 @@ image : {
 anno : {
     image_id :
     worker_id :
-    anno : {
-        label :
-    }
+    anno : {}
 }
 
 gt_label : {
     image_id :
-    label : {
-        label :
-    }
+    label : {}
 }
 ```
 
+## Classification Format
+
+```
+dataset : {
+    ...
+    'num_classes' : int,
+    'taxonomy_data' : taxonomy_data
+}
+
+taxonomy_data : [{
+    key : int or str,
+    parent : int or str,
+    data : {}
+}]
+
+anno : {
+    ...
+    anno : {
+        label : int or str
+    }
+}
+
+gt_label : {
+    ...
+    label : {
+        label : int or str
+    }
+}
+```

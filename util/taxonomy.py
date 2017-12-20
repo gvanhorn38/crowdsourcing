@@ -23,7 +23,6 @@ SOFTWARE.
 """
 from __future__ import absolute_import, division, print_function
 from collections import OrderedDict
-import copy
 
 import numpy as np
 
@@ -76,6 +75,16 @@ class Node(object):
         self.children[node.key] = node
         node.parent = self
         node.order = len(self.children) - 1
+
+    def jsonify_data(self):
+        """ jsonify our data, specifically handling numpy arrays.
+        """
+        json_data = {}
+        for key, value in self.data.iteritems():
+            if isinstance(value, np.ndarray):
+                value = value.tolist()
+            json_data[key] = value
+        return json_data
 
     def __eq__(self, other):
         return self.key == other.key
@@ -226,7 +235,7 @@ class Taxonomy(object):
             node_data.append({
                 'key': node.key,
                 'parent': node.parent.key if not node.is_root else None,
-                'data': copy.copy(node.data) if export_data else {}
+                'data': node.jsonify_data() if export_data else {}
             })
 
         return node_data
