@@ -92,9 +92,11 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
         self.prob_trust_prior = prob_trust_prior
         self.prob_trust_beta = prob_trust_beta
         self.prob_trust = prob_trust
-        self.recursive_trust = recursive_trust
 
         self.model_worker_trust = model_worker_trust
+        self.recursive_trust = recursive_trust
+
+
 
         # NOTE: not sure what to do here, one for each class?
         # How should it be plotted?
