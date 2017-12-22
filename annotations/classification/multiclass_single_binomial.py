@@ -481,8 +481,7 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
 
                     z = self.z[w].label
 
-                    num = math.log(self.prob_anno_given_label_and_skills(
-                        z, y, self.z[w].worker))
+                    num = math.log(self.prob_anno_given_label_and_skills(z, y, self.z[w].worker))
 
                     # Are we modeling the dependence of the user labels?
                     if self.params.model_worker_trust:
@@ -598,10 +597,9 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
         self.taxonomy = None
         self.encode_exclude['taxonomy'] = True
 
-        if params.model_worker_trust:
-            self.prob_trust = params.prob_trust
-            self._rec_cache = {}
-            self.encode_exclude['_rec_cache'] = True
+        self.prob_trust = params.prob_trust
+        self._rec_cache = {}
+        self.encode_exclude['_rec_cache'] = True
 
 
     def compute_log_likelihood(self):
