@@ -192,7 +192,7 @@ class CrowdDatasetMulticlass(CrowdDataset):
         prob_trust_denom = self.prob_trust_prior_beta
 
         for worker_id, worker in self.workers.iteritems():
-            for image_id, image in worker.images.iteritems():
+            for image in worker.images.itervalues():
 
                 worker_t = image.z.keys().index(worker_id)
                 if worker_t > 0:
@@ -202,16 +202,6 @@ class CrowdDatasetMulticlass(CrowdDataset):
                     prob_trust_denom += 1.
                     if worker_label == prev_anno.label:
                         prob_trust_num += 1.
-
-                # worker_label = image.z[worker_id].label
-                # for prev_worker_id, prev_anno in image.z.iteritems():
-                #   if prev_worker_id == worker_id:
-                #     break
-                #   if self.cv_worker and self.cv_worker.id == prev_worker_id:
-                #     continue
-                #   prob_trust_denom += 1.
-                #   if worker_label == prev_anno.label:
-                #     prob_trust_num += 1.
 
         self.prob_trust = np.clip(
             prob_trust_num / float(prob_trust_denom), 0.00000001, 0.9999)
@@ -239,8 +229,8 @@ class CrowdDatasetMulticlass(CrowdDataset):
         return data
 
 class CrowdImageMulticlass(CrowdImage):
-    def __init__(self, id, params):
-        super(CrowdImageMulticlass, self).__init__(id, params)
+    def __init__(self, id_, params):
+        super(CrowdImageMulticlass, self).__init__(id_, params)
 
         self.risk = 1.
 
@@ -275,243 +265,120 @@ class CrowdImageMulticlass(CrowdImage):
         num_classes = class_probs.shape[0]
         class_labels = np.arange(num_classes)
 
-        # Each row of this matrix will store the log probabilities that need to be
-        # summed to get the log likelihood of a class. The first column will store
-        # the log(p(y)) of the class, the subsequent columns will store (for each
-        # worker) either log(w_j) or (log(1-w_j) + log(z))
-        ll_to_sum = np.empty((num_classes, len(self.z) + 1), dtype=np.float)
-        ll_to_sum[:,0] = log_class_probs
-
-        worker_index = 1 # if there is a computer vision annotation, then we won't fill in all of the columns
         ncv = self.params.naive_computer_vision
-        for anno in self.z.itervalues():
-            if not anno.is_computer_vision() or ncv:
 
-                wl = anno.label
-                pc = anno.worker.prob_correct
-                lpc = np.log(pc)
-                lpnc = np.log(1. - pc)
-                lppnc = lpnc + log_class_probs[wl]
+        if self.params.model_worker_trust:
 
-                ll_to_sum[:,worker_index] = np.where(class_labels == wl, lpc, lppnc)
-                worker_index += 1
+            # Pull out the relevant data from the workers
+            worker_labels = []
+            worker_prob_trust = []
+            worker_prob_correct = []
+            for anno in self.z.values():
+                if not anno.is_computer_vision() or ncv:
+                    worker_labels.append(anno.label)
+                    worker_prob_trust.append(anno.worker.prob_trust)
+                    worker_prob_correct.append(anno.worker.prob_correct)
 
+            num_workers = len(worker_labels)
+            worker_labels = np.array(worker_labels)
+            worker_prob_trust = np.array(worker_prob_trust)
+            worker_prob_correct = np.array(worker_prob_correct)
 
-        # if self.params.model_worker_trust:
-        #     num_workers = worker_index - 1
-        #     # Build a lookup table for each worker that stores
-        #     # the probability of a previous label given their label
-        #     # [[match, not_match]]
-        #     worker_perception_of_previous_response = np.zeros((num_workers, 2), dtype=np.float)
-        #     wind = 1
-        #     for anno in self.z.values()[1:]:
-        #         if not anno.is_computer_vision() or ncv:
+            # Probability of the annotations given a specific true class and worker skill
+            # p(z_j | y_i, w_j)
+            # For a single binomial model, this takes one of two values:
+            # w_j
+            # (1 - w_j) p(z)
+            prob_anno = np.empty((num_workers, num_classes), dtype=np.float)
+            for wind in xrange(num_workers):
+                wl = worker_labels[wind]
+                pc = worker_prob_correct[wind]
+                pnc = 1. - pc
+                ppnc = pnc * class_probs[wl]
+                prob_anno[wind] = np.where(class_labels == wl, pc, ppnc)
 
-        #             wl = anno.label
-        #             pt = anno.worker.prob_trust
-        #             lpt = np.log(pt)
-        #             lpnt = log(1. - pt)
-        #             lppnt = lpnt + log_class_probs[wl]
+            # p(H^{t-1} | z_j, w_j)
+            # Each worker j will represent a row. Each column z will represent
+            # a class. Each entry [j, z] will be the probability of the previous
+            # annotations given that the worker j provided label z.
+            prob_prior_responses = np.empty((num_workers, num_classes), dtype=np.float)
 
-        #             worker_perceptions[wind] = [lpt, lppnt]
-        #             wind += 1
+            # Fill in the first row as the base case. There are no previous annotations,
+            # So the probability of the previous annotations is 1.
+            prob_prior_responses[0,:] = 1.
 
-        #     log_prob_prior_responses = np.empty((num_classes, num_workers), dtype=np.float)
-        #     log_prob_prior_responses[:,0] = 0
-        #     stored_log_h = np.empty(num_workers, dtype=np.float)
-        #     stored_log_h[0] = 0
-        #     for wind in xrange(1, num_workers):
+            # Fill in the subsequent rows for each additional worker
+            for wind in xrange(1, num_workers):
+                # We want to compute the probability of the previous annotation
+                # for each possible answer that this worker could have given
 
-        #         num = log_prob_prior_responses[wind - 1, ]
-        #         denom =
+                pl = worker_labels[wind-1]
+                wl = worker_labels[wind]
+                pt = worker_prob_trust[wind]
+                pnt = 1. - pt
+                ppnt = pnt * class_probs[wl]
 
-        #     worker_labels = []
-        #     worker_prob_trust = []
-        #     worker_prob_correct = []
-        #     for anno in self.z.values():
-        #         if not anno.is_computer_vision() or ncv:
-        #             worker_labels.append(anno.label)
-        #             worker_prob_trust.append(anno.worker.prob_trust)
-        #             worker_prob_correct.append(anno.worker.prob_correct)
+                perception = np.where(class_labels == pl, pt, ppnt)
 
-        #     worker_labels = np.array(worker_labels)
-        #     worker_prob_trust = np.array(worker_prob_trust)
-        #     worker_prob_correct = np.array(worker_prob_correct)
+                num = perception * prob_prior_responses[wind - 1]
+                denom = num.sum()
+                prob_prior_responses[wind] = num / denom
 
-        #     # p(z_j | y_i, w_j)
-        #     # For a single binomial model, this takes one of two values:
-        #     # w_j
-        #     # (1 - w_j) p(z)
-        #     # Compute these two values for each worker, first column will be correct and
-        #     # the second column will be incorrect.
-        #     prob_anno = np.empty((num_workers, 2), dtype=np.float)
-        #     prob_anno[:, 0]
+            # Store these computions with the labels, to be used when computing the log likelihood.
+            wind = 0
+            for anno in self.z.values():
+                if not anno.is_computer_vision() or ncv:
+                    wl = worker_labels[wind]
+                    anno.prob_prev_annos = prob_prior_responses[wind, wl]
+                    wind += 1
 
-        #     # p(H^{t-1} | z_j, w_j)
-        #     prob_prior_responses = np.empty((num_workers, num_classes), dtype=np.float)
+            # Compute the probability of the annotations given specific
+            # ground truth classes
+            # p(z_j | y, H, w)
+            num = prob_anno * prob_prior_responses
+            denom = num.sum(axis = 1)
+            probs = num / denom[:, np.newaxis]
 
-        #     # fill in the first row as the base case
-        #     prob_prior_responses[0,:] = 1.
+            # Compute log(p(y)) + Sum( log(p(z_j | y, H, w)) )
+            lprobs = np.log(probs).sum(axis = 0)
+            lls = log_class_probs + lprobs
 
-        #     wind = 1
-        #     for anno in self.z.values()[1:]:
-        #         if not anno.is_computer_vision() or ncv:
-        #             # We want to compute the probability of the previous annotation
-        #             # for each possible answer that this worker could have given
+        else:
+            # Not modeling worker trust
 
+            # Each row of this matrix will store the log probabilities that need to be
+            # summed to get the log likelihood of a class. The first column will store
+            # the log(p(y)) of the class, the subsequent columns will store (for each
+            # worker) either log(w_j) or (log(1-w_j) + log(z))
+            ll_to_sum = np.empty((num_classes, len(self.z) + 1), dtype=np.float)
+            ll_to_sum[:,0] = log_class_probs
 
-        lls = np.sum(ll_to_sum[:,:worker_index], axis=1)
+            worker_index = 1 # if there is a computer vision annotation, then we won't fill in all of the columns
+            for anno in self.z.itervalues():
+                if not anno.is_computer_vision() or ncv:
+
+                    wl = anno.label
+                    pc = anno.worker.prob_correct
+                    lpc = np.log(pc)
+                    lpnc = np.log(1. - pc)
+                    lppnc = lpnc + log_class_probs[wl]
+
+                    ll_to_sum[:,worker_index] = np.where(class_labels == wl, lpc, lppnc)
+                    worker_index += 1
+            lls = np.sum(ll_to_sum[:,:worker_index], axis=1)
+
 
         y_labels = np.argsort(lls)[::-1]
         lls = lls[y_labels]
 
         pred_y = y_labels[0]
-        self.y = CrowdLabelMulticlass(
-            image=self, worker=None, label=pred_y)
+        self.y = CrowdLabelMulticlass(image=self, worker=None, label=pred_y)
 
         m = lls[0]
         num = 1.
         denom = np.sum(np.exp(lls - m))
         prob_y = num / denom
         self.risk = 1. - prob_y
-
-        return
-
-        new_y_label = pred_y
-        new_risk = self.risk
-        new_y_labels = y_labels
-        new_lls = lls
-
-        # workers_correct = np.array(worker_skills)
-        # workers_incorrect = 1. - workers_correct
-
-        # For each value of y, we want to store either the correct or incorrect value
-        # for each worker based on their annotation
-
-        # Worker indices, most recent to oldest
-        winds = self.z.keys()
-        winds.reverse()
-        worker_times = range(len(winds))
-        worker_times.reverse()
-
-        # log likelihoods of the classes
-        lls = []
-        for y in xrange(num_classes):
-
-            if self.cv_pred is not None and not self.params.naive_computer_vision:
-                prob_y = self.cv_pred.prob[y]
-            else:
-                prob_y = self.params.class_probs[y]
-
-            ll_y = math.log(prob_y)
-
-            for w, worker_time in zip(winds, worker_times):
-                if not self.z[w].is_computer_vision() or self.params.naive_computer_vision:
-
-                    # if self.cv_pred is not None and not self.params.naive_computer_vision:
-                    #  prob_z = self.cv_pred.prob[self.z[w].label]
-                    # else:
-                    #  prob_z = self.params.class_probs[self.z[w].label]
-                    z_label = self.z[w].label
-                    prob_z = self.params.class_probs[z_label]
-
-                    # Compute the numerator
-                    num = 0
-                    # Likelihood of the worker's label given the worker's skill
-                    if z_label == y:
-                        num += math.log(self.z[w].worker.prob_correct)
-                    else:
-                        num += (math.log(1. -
-                                         self.z[w].worker.prob_correct) + math.log(prob_z))
-
-                    if self.params.model_worker_trust:
-                        if self.params.recursive_trust:
-                            num += math.log(self.z[w].worker.compute_prob_of_previous_annotations(
-                                self.id, z_label, worker_time))
-                        else:
-                            # Likelihood of the sequence of previous labels given this worker's label
-                            for prev_w in self.z:
-                                if not self.z[prev_w].is_computer_vision() or self.params.naive_computer_vision:
-                                    if prev_w == w:
-                                        break
-
-                                    if z_label == self.z[prev_w].label:
-                                        num += math.log(self.z[w].worker.prob_trust)
-                                    else:
-                                        num += (math.log(1. -
-                                                         self.z[w].worker.prob_trust) + math.log(prob_z))
-
-                        # Compute the denominator
-                        denom = 0.
-                        for z_other in self.params.class_probs:
-                            # Class prior
-                            # p(y)
-                            z_other_class_prob = self.params.class_probs[z_other]
-
-                            # Likelihood of the this other label given the worker's skill
-                            # p(z | y, w)
-                            if z_other == y:
-                                prob_z_other = self.z[w].worker.prob_correct
-                            else:
-                                prob_z_other = (
-                                    1. - self.z[w].worker.prob_correct) * z_other_class_prob
-
-                            # p(H^{t-1} | z, w)
-                            if self.params.recursive_trust:
-                                prob_z_other *= self.z[w].worker.compute_prob_of_previous_annotations(
-                                    self.id, z_other, worker_time)
-
-                            else:
-                                # Likelihood of the sequence of previous labels given this other label
-                                # p(z^0 | z^t, w)
-
-                                for prev_w in self.z:
-                                    if not self.z[prev_w].is_computer_vision() or self.params.naive_computer_vision:
-                                        if prev_w == w:
-                                            break
-                                    if z_other == self.z[prev_w].label:
-                                        prob_z_other *= self.z[w].worker.prob_trust
-                                    else:
-                                        prob_z_other *= (
-                                            (1. - self.z[w].worker.prob_trust) * z_other_class_prob)
-
-                            denom += prob_z_other
-                        denom = math.log(denom)
-                        num -= denom
-                    ll_y += num
-
-            lls.append((y, ll_y))
-
-        lls.sort(key=lambda x: x[1])
-        lls.reverse()
-        pred_y = lls[0][0]
-
-        self.y = CrowdLabelMulticlass(image=self, worker=None, label=pred_y)
-
-        # Compute the risk of this label
-        m = lls[0][1]
-        num = 1.  # math.exp(lls[0][1] - m)
-        denom = sum([math.exp(x[1] - m) for x in lls])
-        prob_y = num / denom
-
-        self.risk = 1. - prob_y
-
-        if new_y_label != pred_y:
-            print new_y_label
-            print pred_y
-
-            print new_risk
-            print self.risk
-
-            print [anno.label for anno in self.z.values()]
-            print [anno.worker.prob_correct for anno in self.z.values()]
-
-            print new_y_labels[:10]
-            print new_lls[:10]
-
-            raise Exception
-        else:
-            print "g2g"
 
     def compute_log_likelihood(self):
         """Compute the log likelihood of the predicted label given the prior that the class is present.
@@ -546,15 +413,13 @@ class CrowdImageMulticlass(CrowdImage):
 
 
 class CrowdWorkerMulticlass(CrowdWorker):
-    def __init__(self, id, params):
-        super(CrowdWorkerMulticlass, self).__init__(id, params)
+    def __init__(self, id_, params):
+        super(CrowdWorkerMulticlass, self).__init__(id_, params)
         self.skill = None
 
         # Copy over the global probabilities
         self.prob_correct = params.prob_correct
         self.prob_trust = params.prob_trust
-
-        self._rec_cache = {}
 
     def compute_log_likelihood(self):
         """ The log likelihood of the skill is simply the log of the Beta distribution.
@@ -569,66 +434,11 @@ class CrowdWorkerMulticlass(CrowdWorker):
 
         return ll
 
-    # p(H^{t-1} | z_j, w_j)
-    def compute_prob_of_previous_annotations(self, image_id, our_label, t, compute_denom=True):
-
-        prob = 1.
-
-        # Break the recursion
-        if t == 0:
-            return prob
-
-        # Check the recursion cache for precomputed values
-        rec_key = (image_id, our_label, t, compute_denom)
-        if rec_key in self._rec_cache:
-            return self._rec_cache[rec_key]
-
-        our_label_class_prob = self.params.class_probs[our_label]
-
-        # probability of the previous annotation given our annotation
-        prev_anno = self.images[image_id].z.values()[t - 1]
-        prev_label = prev_anno.label
-
-        if prev_label == our_label:
-            prob *= self.prob_trust
-        else:
-            prob *= (1. - self.prob_trust) * our_label_class_prob
-
-        prob *= prev_anno.worker.compute_prob_of_previous_annotations(
-            image_id, prev_label, t - 1)
-
-        # Compute the denominator, which is a summation of the probability of any
-        # label occuring previously given our annotation
-        if compute_denom:
-            denom = 0.
-            for z_other in self.params.class_probs:
-
-                # p(z | z_j, w)
-                if z_other == our_label:
-                    prob_z_other = self.prob_trust
-                else:
-                    prob_z_other = (1. - self.prob_trust) * \
-                        our_label_class_prob
-
-                prob_z_other *= prev_anno.worker.compute_prob_of_previous_annotations(
-                    image_id, z_other, t - 1)
-                denom += prob_z_other
-        else:
-            denom = 1.
-
-        p = prob / denom
-
-        self._rec_cache[rec_key] = p
-        return p
-
     def estimate_parameters(self, avoid_if_finished=False):
         """
         """
         # For each worker, we have a binomial distribution for the probability a worker is correct.
         # This distribution has a Beta prior from the distribution of all workers pooled together.
-
-        # clear the recursive cache since
-        self._rec_cache = {}
 
         # Estimate our probability of being correct by looking at our agreement with predicted labels
         num_correct = self.params.prob_correct_beta * self.params.prob_correct
@@ -654,7 +464,7 @@ class CrowdWorkerMulticlass(CrowdWorker):
             prob_trust_num = self.params.prob_trust_beta * self.params.prob_trust
             prob_trust_denom = self.params.prob_trust_beta
 
-            for image_id, image in self.images.iteritems():
+            for image in self.images.itervalues():
 
                 # We are only dependent on the annotation immediately before us.
                 our_t = image.z.keys().index(self.id)
@@ -666,26 +476,8 @@ class CrowdWorkerMulticlass(CrowdWorker):
                     if our_label == prev_anno.label:
                         prob_trust_num += 1.
 
-                # our_label = image.z[self.id].label
-                # for prev_worker_id, prev_anno in image.z.iteritems():
-                #   if prev_worker_id == self.id:
-                #     break
-                #   #if self.params.cv_worker and self.params.cv_worker.id == prev_worker_id:
-                #   #  continue
-                #   prob_trust_denom += 1.
-                #   if our_label == prev_anno.label:
-                #     prob_trust_num += 1.
-
             self.prob_trust = np.clip(
                 prob_trust_num / float(prob_trust_denom), 0.00000001, 0.9999)
-
-            # Debugging stuff
-            # if self.id == '423501':
-            #   print "Num annos:", len(self.images)
-            #   print "Prob Correct:", self.prob_correct
-            #   print "Prob Trust:", self.prob_trust
-            #   print
-            #   print
 
             self.skill.append(self.prob_trust)
 
@@ -696,6 +488,9 @@ class CrowdLabelMulticlass(CrowdLabel):
 
         self.label = label
         self.gtype = 'multiclass_single_bin'
+
+        # Computed when estimating the image labels
+        self.prob_prev_annos = None
 
     def compute_log_likelihood(self):
         """ The likelihood of the label is simply the Bernoulli.
@@ -720,19 +515,9 @@ class CrowdLabelMulticlass(CrowdLabel):
 
         # Agreement with the previous worker annotations
         if self.worker.params.model_worker_trust:
-            t = self.image.z.keys().index(self.worker.id)
-            ll += math.log(self.worker.compute_prob_of_previous_annotations(
-                self.image.id, z, t, compute_denom=False))
 
-        # Agreement with the previous worker annotations
-        # our_worker_id = self.worker.id
-        # for worker_id, anno in self.image.z.iteritems():
-        #   if worker_id == our_worker_id:
-        #     break
-        #   if z == anno.label:
-        #     ll += math.log(self.worker.prob_trust)
-        #   else:
-        #     ll += ( math.log(1. - self.worker.prob_trust) + math.log(prob_z) )
+            # Should have been computed when estimating the labels
+            ll += math.log(self.prob_prev_annos)
 
         return ll
 
