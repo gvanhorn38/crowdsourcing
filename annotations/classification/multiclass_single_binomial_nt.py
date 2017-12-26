@@ -267,7 +267,9 @@ class CrowdImageMulticlass(CrowdImage):
 
         ncv = self.params.naive_computer_vision
 
-        if self.params.model_worker_trust:
+        num_workers = sum([1 for anno in self.z.itervalues() if not anno.is_computer_vision() or ncv])
+
+        if self.params.model_worker_trust and num_workers > 1:
 
             # Pull out the relevant data from the workers
             worker_labels = []
@@ -303,12 +305,16 @@ class CrowdImageMulticlass(CrowdImage):
             # annotations given that the worker j provided label z.
             prob_prior_responses = np.empty((num_workers, num_classes), dtype=np.float)
 
-            # Fill in the first row as the base case. There are no previous annotations,
-            # So the probability of the previous annotations is 1.
-            prob_prior_responses[0,:] = 1.
+            # Fill in the first two rows as the base case.
+            prob_prior_responses[0,:] = 1. #class_probs
+            wl = worker_labels[1]
+            pt = worker_prob_trust[1]
+            pnt = 1. - pt
+            ppnt = (1. - pt) * class_probs[wl]
+            prob_prior_responses[1,:] = np.where(class_labels == worker_labels[0], pt, pnt)
 
             # Fill in the subsequent rows for each additional worker
-            for wind in xrange(1, num_workers):
+            for wind in xrange(2, num_workers):
                 # We want to compute the probability of the previous annotation
                 # for each possible answer that this worker could have given
 
@@ -318,7 +324,7 @@ class CrowdImageMulticlass(CrowdImage):
                 pnt = 1. - pt
                 ppnt = pnt * class_probs[wl]
 
-                perception = np.where(class_labels == pl, pt, ppnt)
+                perception = np.where(class_labels == pl, pt, pnt)
 
                 num = perception * prob_prior_responses[wind - 1]
                 denom = num.sum()
@@ -344,7 +350,7 @@ class CrowdImageMulticlass(CrowdImage):
             lls = log_class_probs + lprobs
 
         else:
-            # Not modeling worker trust
+            # Not modeling worker trust, or there is only 1 annotation on the image
 
             # Each row of this matrix will store the log probabilities that need to be
             # summed to get the log likelihood of a class. The first column will store
@@ -370,6 +376,29 @@ class CrowdImageMulticlass(CrowdImage):
 
         y_labels = np.argsort(lls)[::-1]
         lls = lls[y_labels]
+
+        # if self.id == '7287068':
+        #     print y_labels[:10]
+        #     print lls[:10]
+
+        #     print log_class_probs[y_labels][:2]
+        #     print lprobs[y_labels][:2]
+
+        #     print
+        #     print np.log(prob_anno).sum(axis=0)[y_labels][:2]
+        #     print np.log(prob_prior_responses).sum(axis=0)[y_labels][:2]
+        #     print
+
+        #     print
+        #     print np.log(prob_anno)[:,y_labels][:,:2]
+        #     print np.log(prob_prior_responses)[:,y_labels][:,:2]
+        #     print
+
+        #     print num_workers
+        #     print worker_labels
+        #     print worker_prob_correct
+        #     print worker_prob_trust
+
 
         pred_y = y_labels[0]
         self.y = CrowdLabelMulticlass(image=self, worker=None, label=pred_y)
