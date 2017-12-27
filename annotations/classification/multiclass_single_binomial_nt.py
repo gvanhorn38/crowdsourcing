@@ -285,9 +285,6 @@ class CrowdImageMulticlass(CrowdImage):
             worker_prob_trust = np.array(worker_prob_trust)
             worker_prob_correct = np.array(worker_prob_correct)
 
-            # placeholder index matrix for future computations
-            temp_ind_mat = np.eye(num_classes, dtype=np.bool)
-
             # p(H^{t-1} | z_j, w_j)
             # Each worker j will represent a row. Each column z will represent
             # a class. Each entry [j, z] will be the probability of the previous
@@ -313,12 +310,15 @@ class CrowdImageMulticlass(CrowdImage):
                 ppnt = pnt * class_probs[wl]
 
                 # p(z_j^{t-1} | z, w_j^t) * p(H^{t-2} | z_j^{t-1}, w_j^{t-1})
-                num = np.where(class_labels == pl, pt, ppnt) * prob_prior_responses[wind - 1][pl]
+                ppr = prob_prior_responses[wind - 1][pl]
+                num = np.full(shape=num_classes, fill_value=ppnt * ppr)
+                num[pl] = pt * ppr
 
                 # Sum( p(z | z_j^t, w_j^t) * p(H^{t-2} | z, w_j^{t-1}) )
                 match = pt * prob_prior_responses[wind - 1]
                 no_match = ppnt * prob_prior_responses[wind - 1]
-                denom = np.where(temp_ind_mat, match, no_match).sum(axis=1)
+                no_match_sum = no_match.sum()
+                denom = (match + no_match_sum) - no_match
 
                 prob_prior_responses[wind] = num / denom
 
@@ -339,11 +339,14 @@ class CrowdImageMulticlass(CrowdImage):
                 pnc = 1. - pc
                 ppnc = pnc * class_probs[wl]
 
-                num = np.where(class_labels == wl, pc, ppnc) * prob_prior_responses[wind][wl]
+                ppr = prob_prior_responses[wind][wl]
+                num = np.full(shape=num_classes, fill_value=ppnc * ppr)
+                num[wl] = pc * ppr
 
                 diag = pc * prob_prior_responses[wind]
                 off_diag = ppnc * prob_prior_responses[wind]
-                denom = np.where(temp_ind_mat, diag, off_diag).sum(axis=1)
+                off_diag_sum = off_diag.sum()
+                denom = (diag + off_diag_sum) - off_diag
 
                 probs[wind] = num / denom
 
