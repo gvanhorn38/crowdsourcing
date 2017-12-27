@@ -280,89 +280,13 @@ class CrowdImageMulticlass(CrowdImage):
                     worker_labels.append(anno.label)
                     worker_prob_trust.append(anno.worker.prob_trust)
                     worker_prob_correct.append(anno.worker.prob_correct)
-
             num_workers = len(worker_labels)
             worker_labels = np.array(worker_labels)
             worker_prob_trust = np.array(worker_prob_trust)
             worker_prob_correct = np.array(worker_prob_correct)
 
-            ###############################
-            # # Version 1:
-
-            # # Probability of the annotations given a specific true class and worker skill
-            # # p(z_j | y_i, w_j)
-            # # For a single binomial model, this takes one of two values:
-            # # w_j
-            # # (1 - w_j) p(z)
-            # prob_anno = np.empty((num_workers, num_classes), dtype=np.float)
-            # for wind in xrange(num_workers):
-            #     wl = worker_labels[wind]
-            #     pc = worker_prob_correct[wind]
-            #     pnc = 1. - pc
-            #     ppnc = pnc * class_probs[wl]
-            #     prob_anno[wind] = np.where(class_labels == wl, pc, ppnc)
-
-            # # p(H^{t-1} | z_j, w_j)
-            # # Each worker j will represent a row. Each column z will represent
-            # # a class. Each entry [j, z] will be the probability of the previous
-            # # annotations given that the worker j provided label z.
-            # prob_prior_responses = np.empty((num_workers, num_classes), dtype=np.float)
-
-            # # Fill in the first two rows as the base case.
-            # prob_prior_responses[0,:] = 1. #class_probs
-
-            # pl = worker_labels[0]
-            # wl = worker_labels[1]
-            # pt = worker_prob_trust[1]
-            # pnt = 1. - pt
-            # #ppnt = (1. - pt) * class_probs[wl]
-            # prob_prior_responses[1,:] = np.where(class_labels == pl, pt, pnt)
-
-            # # Fill in the subsequent rows for each additional worker
-            # for wind in xrange(2, num_workers):
-            #     # We want to compute the probability of the previous annotation
-            #     # for each possible answer that this worker could have given
-
-            #     pl = worker_labels[wind-1]
-            #     wl = worker_labels[wind]
-            #     pt = worker_prob_trust[wind]
-            #     pnt = 1. - pt
-            #     #ppnt = pnt * class_probs[wl]
-
-            #     perception = np.where(class_labels == pl, pt, pnt)
-            #     num = perception * prob_prior_responses[wind - 1]
-            #     denom = num.sum()
-            #     prob_prior_responses[wind] = num / denom
-
-            # # Store these computions with the labels, to be used when computing the log likelihood.
-            # # wind = 0
-            # # for anno in self.z.values():
-            # #     if not anno.is_computer_vision() or ncv:
-            # #         wl = worker_labels[wind]
-            # #         anno.prob_prev_annos = prob_prior_responses[wind, wl]
-            # #         wind += 1
-
-            # # Compute the probability of the annotations given specific
-            # # ground truth classes
-            # # p(z_j | y, H, w)
-            # num = prob_anno * prob_prior_responses
-            # denom = num.sum(axis = 1)
-            # probs = num / denom[:, np.newaxis]
-
-            # # Compute log(p(y)) + Sum( log(p(z_j | y, H, w)) )
-            # lprobs = np.log(probs).sum(axis = 0)
-            # lls_v1 = log_class_probs + lprobs
-            #################################
-
-            #################################
-            # Version 2:
-            # placeholder matrix for future computations
-            #temp_mat = np.empty((num_classes, num_classes), dtype=np.float)
-            #temp_ind_mat = np.full((num_classes, num_classes), fill_value=False, dtype=np.bool)
-            #np.fill_diagonal(temp_ind_mat, True)
+            # placeholder index matrix for future computations
             temp_ind_mat = np.eye(num_classes, dtype=np.bool)
-            #temp_inds = np.array([False] * num_classes, dtype=np.bool)
-            #temp_inds[0] = True
 
             # p(H^{t-1} | z_j, w_j)
             # Each worker j will represent a row. Each column z will represent
@@ -371,19 +295,16 @@ class CrowdImageMulticlass(CrowdImage):
             prob_prior_responses = np.empty((num_workers, num_classes), dtype=np.float)
 
             # Fill in the first two rows as the base case.
-            prob_prior_responses[0,:] = 1.
+            prob_prior_responses[0,:] = 1. # no prior annotations
             pl = worker_labels[0]
             wl = worker_labels[1]
             pt = worker_prob_trust[1]
             pnt = 1. - pt
-            #ppnt = (1. - pt) * class_probs[wl]
-            prob_prior_responses[1,:] = np.where(class_labels == pl, pt, pnt)
+            ppnt = (1. - pt) * class_probs[wl]
+            prob_prior_responses[1,:] = np.where(class_labels == pl, pt, ppnt)
 
             # Fill in the subsequent rows for each additional worker
-            #t_denom = np.empty(num_classes)
             for wind in xrange(2, num_workers):
-                # We want to compute the probability of the previous annotation
-                # for each possible answer that this worker could have given
 
                 pl = worker_labels[wind-1]
                 wl = worker_labels[wind]
@@ -395,25 +316,9 @@ class CrowdImageMulticlass(CrowdImage):
                 num = np.where(class_labels == pl, pt, ppnt) * prob_prior_responses[wind - 1][pl]
 
                 # Sum( p(z | z_j^t, w_j^t) * p(H^{t-2} | z, w_j^{t-1}) )
-                #a = np.full(shape=(num_classes, num_classes), fill_value=pnt, dtype=np.float)
-                # temp_mat.fill(pnt)
-                # np.fill_diagonal(temp_mat, pt)
-                # b = temp_mat * prob_prior_responses[wind - 1]
-                # denom = np.sum(b, axis=1)
-
-                diag = pt * prob_prior_responses[wind - 1]
-                r = ppnt * prob_prior_responses[wind - 1]
-                #denom_iter = (np.where(np.roll(temp_inds, c), diag, r).sum() for c in xrange(num_classes))
-                #denom = np.fromiter(denom_iter, dtype=np.float, count=num_classes)
-                #denom = np.array([np.where(class_labels == c, diag, r).sum() for c in xrange(num_classes)])
-                #denom = np.array([np.where(np.roll(temp_inds, c), diag, r).sum() for c in xrange(num_classes)])
-                denom = np.where(temp_ind_mat, diag, r).sum(axis=1)
-
-                #for c in xrange(num_classes):
-                #    t_denom[c] = np.where(class_labels == c, diag, r).sum()
-
-                # if np.allclose(denom, t_denom):
-                #     print "g2g"
+                match = pt * prob_prior_responses[wind - 1]
+                no_match = ppnt * prob_prior_responses[wind - 1]
+                denom = np.where(temp_ind_mat, match, no_match).sum(axis=1)
 
                 prob_prior_responses[wind] = num / denom
 
@@ -425,8 +330,10 @@ class CrowdImageMulticlass(CrowdImage):
                     anno.prob_prev_annos = prob_prior_responses[wind, wl]
                     wind += 1
 
+            # p(z_j | y, H, w)
             probs = np.empty((num_workers, num_classes))
             for wind in xrange(num_workers):
+
                 wl = worker_labels[wind]
                 pc = worker_prob_correct[wind]
                 pnc = 1. - pc
@@ -434,33 +341,15 @@ class CrowdImageMulticlass(CrowdImage):
 
                 num = np.where(class_labels == wl, pc, ppnc) * prob_prior_responses[wind][wl]
 
-                #a = np.full(shape=(num_classes, num_classes), fill_value=ppnc, dtype=np.float)
-                # temp_mat.fill(ppnc)
-                # np.fill_diagonal(temp_mat, pc)
-                # b = temp_mat * prob_prior_responses[wind]
-                # denom = np.sum(b, axis=1)
-
                 diag = pc * prob_prior_responses[wind]
-                r = ppnc * prob_prior_responses[wind]
-                #denom_iter = (np.where(np.roll(temp_inds, c), diag, r).sum() for c in xrange(num_classes))
-                #denom = np.fromiter(denom_iter, dtype=np.float, count=num_classes)
-                #denom = np.array([np.where(class_labels == c, diag, r).sum() for c in xrange(num_classes)])
-                #denom = np.array([np.where(np.roll(temp_inds, c), diag, r).sum() for c in xrange(num_classes)])
-                denom = np.where(temp_ind_mat, diag, r).sum(axis=1)
-
-                # if np.allclose(denom, denom_2):
-                #     print "g2g"
+                off_diag = ppnc * prob_prior_responses[wind]
+                denom = np.where(temp_ind_mat, diag, off_diag).sum(axis=1)
 
                 probs[wind] = num / denom
 
             # Compute log(p(y)) + Sum( log(p(z_j | y, H, w)) )
             lprobs = np.log(probs).sum(axis = 0)
             lls = log_class_probs + lprobs
-
-            # if np.allclose(lls, lls_v1):
-            #     print "same thing %d" % (num_workers,)
-            # else:
-            #     print "NOPE %d" % (num_workers,)
 
         else:
             # Not modeling worker trust, or there is only 1 annotation on the image
@@ -469,10 +358,10 @@ class CrowdImageMulticlass(CrowdImage):
             # summed to get the log likelihood of a class. The first column will store
             # the log(p(y)) of the class, the subsequent columns will store (for each
             # worker) either log(w_j) or (log(1-w_j) + log(z))
-            ll_to_sum = np.empty((num_classes, len(self.z) + 1), dtype=np.float)
+            ll_to_sum = np.empty((num_classes, num_workers + 1), dtype=np.float)
             ll_to_sum[:,0] = log_class_probs
 
-            worker_index = 1 # if there is a computer vision annotation, then we won't fill in all of the columns
+            worker_index = 1
             for anno in self.z.itervalues():
                 if not anno.is_computer_vision() or ncv:
 
@@ -484,34 +373,11 @@ class CrowdImageMulticlass(CrowdImage):
 
                     ll_to_sum[:,worker_index] = np.where(class_labels == wl, lpc, lppnc)
                     worker_index += 1
-            lls = np.sum(ll_to_sum[:,:worker_index], axis=1)
+            lls = np.sum(ll_to_sum, axis=1)
 
 
         y_labels = np.argsort(lls)[::-1]
         lls = lls[y_labels]
-
-        if self.id == '4515275':
-            print y_labels[:10]
-            print lls[:10]
-
-            print log_class_probs[y_labels][:2]
-            print lprobs[y_labels][:2]
-
-            print
-            print np.log(probs).sum(axis=0)[y_labels][:2]
-            print np.log(prob_prior_responses).sum(axis=0)[y_labels][:2]
-            print
-
-            print
-            print np.log(probs)[:,y_labels][:,:2]
-            print np.log(prob_prior_responses)[:,y_labels][:,:2]
-            print
-
-            print num_workers
-            print worker_labels
-            print worker_prob_correct
-            print worker_prob_trust
-
 
         pred_y = y_labels[0]
         self.y = CrowdLabelMulticlass(image=self, worker=None, label=pred_y)
