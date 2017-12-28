@@ -257,7 +257,10 @@ class CrowdImageMulticlass(CrowdImage):
         """ Compute the y that is most likely given the annotations, worker skills, etc.
         """
 
-        if avoid_if_finished and self.finished:
+        # NOTE: This is tricky. If we are estimating worker trust, then we
+        # actually want to compute the log likelihood of the annotations below.
+        # In which case we will return after doing that.
+        if avoid_if_finished and self.finished and not self.params.model_worker_trust:
             return
 
         class_probs = self.params.class_probs
@@ -329,6 +332,9 @@ class CrowdImageMulticlass(CrowdImage):
                     wl = worker_labels[wind]
                     anno.prob_prev_annos = prob_prior_responses[wind, wl]
                     wind += 1
+            # NOTE: see above (we needed to compute the likelihood of the annotations)
+            if avoid_if_finished and self.finished:
+                return
 
             # p(z_j | y, H, w)
             probs = np.empty((num_workers, num_classes))
@@ -381,6 +387,29 @@ class CrowdImageMulticlass(CrowdImage):
 
         y_labels = np.argsort(lls)[::-1]
         lls = lls[y_labels]
+
+        # if self.id == '4515275':
+        #     print y_labels[:10]
+        #     print lls[:10]
+
+        #     print log_class_probs[y_labels][:2]
+        #     print lprobs[y_labels][:2]
+
+        #     print
+        #     print np.log(probs).sum(axis=0)[y_labels][:2]
+        #     print np.log(prob_prior_responses).sum(axis=0)[y_labels][:2]
+        #     print
+
+        #     print
+        #     print np.log(probs)[:,y_labels][:,:2]
+        #     print np.log(prob_prior_responses)[:,y_labels][:,:2]
+        #     print
+
+        #     print num_workers
+        #     print worker_labels
+        #     print worker_prob_correct
+        #     print worker_prob_trust
+
 
         pred_y = y_labels[0]
         self.y = CrowdLabelMulticlass(image=self, worker=None, label=pred_y)
@@ -450,6 +479,9 @@ class CrowdWorkerMulticlass(CrowdWorker):
         """
         # For each worker, we have a binomial distribution for the probability a worker is correct.
         # This distribution has a Beta prior from the distribution of all workers pooled together.
+
+        if avoid_if_finished and self.finished:
+            return
 
         # Estimate our probability of being correct by looking at our agreement with predicted labels
         num_correct = self.params.prob_correct_beta * self.params.prob_correct
@@ -528,6 +560,7 @@ class CrowdLabelMulticlass(CrowdLabel):
         if self.worker.params.model_worker_trust:
 
             # Should have been computed when estimating the labels
+            assert self.prob_prev_annos is not None
             ll += math.log(self.prob_prev_annos)
 
         return ll

@@ -329,7 +329,7 @@ class CrowdDataset(object):
             # Estimate skill parameters for each worker
             if self.learn_worker_params:
                 for worker in self.workers.itervalues():
-                    worker.estimate_parameters()
+                    worker.estimate_parameters(avoid_if_finished=avoid_if_finished)
 
             # Estimate response probability parameters for each worker
             for image in self.images.itervalues():
@@ -581,7 +581,7 @@ class CrowdDataset(object):
         self.fname = fname
         with open(fname) as f:
             data = json.load(f)
-        self.images = {}
+        #self.images = {} #NOTE: I don't think we want to reset the images here.
         if overwrite_workers:
             self.workers = {}
         if 'dataset' in data and load_dataset:
