@@ -568,7 +568,9 @@ class CrowdDataset(object):
         return err / float(num_images)
 
     def load(self, fname, max_assignments=None, sort_annos=False,
-             overwrite_workers=True):
+             overwrite_workers=True, load_dataset=True, load_workers=True,
+             load_images=True, load_annos=True, load_gt_annos=True,
+             load_combined_labels=True):
         """ Load in a dataset json file.
         Args:
           sort_annos (bool): Should the annotations be sorted by timestamp?
@@ -582,18 +584,18 @@ class CrowdDataset(object):
         self.images = {}
         if overwrite_workers:
             self.workers = {}
-        if 'dataset' in data:
+        if 'dataset' in data and load_dataset:
             self.parse(data['dataset'])
-        if 'workers' in data:
+        if 'workers' in data and load_workers:
             for w in data['workers']:
                 if w not in self.workers:
                     self.workers[w] = self._CrowdWorkerClass_(w, self)
                     self.workers[w].parse(data['workers'][w])
-        if 'images' in data:
+        if 'images' in data and load_images:
             for i in data['images']:
                 self.images[i] = self._CrowdImageClass_(i, self)
                 self.images[i].parse(data['images'][i])
-        if 'annos' in data:
+        if 'annos' in data and load_annos:
             annos = data['annos']
 
             # Sort the annotations by the 'created_at' field
@@ -629,7 +631,7 @@ class CrowdDataset(object):
                     self.workers[w].images[i] = self.images[i]
 
         # Are there ground truth labels available?
-        if 'gt_labels' in data:
+        if 'gt_labels' in data and load_gt_annos:
             for l in data['gt_labels']:
                 i, a = l['image_id'], l['label']
                 self.images[i].y_gt = self._CrowdLabelClass_(
@@ -638,7 +640,7 @@ class CrowdDataset(object):
                 self.images[i].y = self.images[i].y_gt
 
         # Are there combined labels available?
-        if 'combined_labels' in data:
+        if 'combined_labels' in data and load_combined_labels:
             for l in data['combined_labels']:
                 i, a = l['image_id'], l['label']
                 self.images[i].y = self._CrowdLabelClass_(self.images[i], None)
