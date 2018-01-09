@@ -81,11 +81,12 @@ anno : {
 }
 
 bbox : {
-    x : float (in image coordinates)
-    y : float (in image coordinates)
-    x2 : float (in image coordinates)
-    y2 : float (in image coordinates)
+    x : float (left edge in image coordinates)
+    y : float (top edge in image coordinates)
+    x2 : float (right edge in image coordinates)
+    y2 : float (bottom edge in image coordinates)
     image_height : int
     image_width : int
 }
 ```
+(x, y) is the top left corner of the bounding box, and (x2, y2) is the bottom right corner of the bounding box.
