@@ -69,7 +69,7 @@ gt_label : {
 ```
 
 ## Detection Format
-
+```
 image : {
     width : int
     height : int
@@ -88,3 +88,4 @@ bbox : {
     image_height : int
     image_width : int
 }
+```
