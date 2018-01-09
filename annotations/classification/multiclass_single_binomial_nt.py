@@ -382,6 +382,11 @@ class CrowdImageMulticlass(CrowdImage):
 
                     ll_to_sum[:,worker_index] = np.where(class_labels == wl, lpc, lppnc)
                     worker_index += 1
+
+                    # When modeling worker trust, we'll just set the probability of the
+                    # pervious annotations to 1.
+                    # anno.prob_prev_annos = 1.
+
             lls = np.sum(ll_to_sum, axis=1)
 
 
