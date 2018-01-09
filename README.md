@@ -29,7 +29,6 @@ image : {
 anno : {
     image_id :
     worker_id :
-    anno : {}
 }
 
 gt_label : {
@@ -71,6 +70,7 @@ gt_label : {
 ## Detection Format
 ```
 image : {
+    ...
     width : int
     height : int
 }
