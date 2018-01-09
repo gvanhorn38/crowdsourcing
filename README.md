@@ -81,10 +81,10 @@ anno : {
 }
 
 bbox : {
-    x : float
-    y : float
-    x2 : float
-    y2 : float
+    x : float (in image coordinates)
+    y : float (in image coordinates)
+    x2 : float (in image coordinates)
+    y2 : float (in image coordinates)
     image_height : int
     image_width : int
 }
