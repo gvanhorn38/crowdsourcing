@@ -19,7 +19,7 @@ Crowdsourcing tools to construct datasets.
     gt_labels : [gt_label]
 }
 worker : {
-
+    
 }
 
 image : {
@@ -67,3 +67,24 @@ gt_label : {
     }
 }
 ```
+
+## Detection Format
+
+image : {
+    width : int
+    height : int
+}
+
+anno : {
+    ...
+    bboxes : [bbox]
+}
+
+bbox : {
+    x : float
+    y : float
+    x2 : float
+    y2 : float
+    image_height : int
+    image_width : int
+}
