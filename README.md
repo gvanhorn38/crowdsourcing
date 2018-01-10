@@ -15,7 +15,7 @@ Crowdsourcing tools to construct datasets.
     images : {
         image_id : image
     }
-    annos : [anno],
+    annos : [annotation],
     gt_labels : [gt_label]
 }
 worker : {
@@ -26,9 +26,10 @@ image : {
 
 }
 
-anno : {
+annotation : {
     image_id :
     worker_id :
+    anno : {} # custom data for a specific annotation type
 }
 
 gt_label : {
