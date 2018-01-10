@@ -54,11 +54,9 @@ taxonomy_data : [{
 }]
 
 anno : {
-    ...
-    anno : {
-        label : int or str
-    }
+    label : int or str
 }
+
 
 gt_label : {
     ...
@@ -77,7 +75,6 @@ image : {
 }
 
 anno : {
-    ...
     bboxes : [bbox]
 }
 
