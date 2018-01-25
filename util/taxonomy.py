@@ -143,6 +143,26 @@ class Taxonomy(object):
 
         self.finalized = True
 
+    def add_node_from_data(self, node_data):
+        """ Create a node from the node data.
+        """
+
+        if self.finalized:
+            raise ValueError("Taxonomy is already finalized.")
+
+        node = Node(node_data['key'], node_data['data'])
+        parent_key = node_data['parent']
+
+        # Assign the parent
+        if parent_key is not None:
+            parent = self.nodes[parent_key]
+            parent.add_child(node)
+        else:
+            node.is_root = True
+
+        self.add_node(node)
+
+
     def add_node(self, node):
         if self.finalized:
             raise ValueError("Taxonomy has been finalized.")
@@ -209,18 +229,8 @@ class Taxonomy(object):
             raise ValueError("Taxonomy is already finalized.")
 
         for node_data in taxonomy_data:
+            self.add_node_from_data(node_data)
 
-            node = Node(node_data['key'], node_data['data'])
-            parent_key = node_data['parent']
-
-            # Assign the parent
-            if parent_key is not None:
-                parent = self.nodes[parent_key]
-                parent.add_child(node)
-            else:
-                node.is_root = True
-
-            self.add_node(node)
 
     def export(self, export_data=True):
         """ Export the following structure
