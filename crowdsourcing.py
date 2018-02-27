@@ -31,6 +31,8 @@ import os
 
 import numpy as np
 
+from .util import progress_bar
+
 class CrowdImage(object):
     """ An image to be annotated.
     """
@@ -313,12 +315,18 @@ class CrowdDataset(object):
 
             if self.debug > 1:
                 print("Estimate params for " + self.name + ", iter " +
-                      str(it + 1) + " likelihood=" + str(log_likelihood))
+                      str(it + 1) + ", current likelihood=" + str(log_likelihood))
 
             # Estimate label predictions in each image using worker labels and
             # current worker parameters
-            for image in self.images.itervalues():
+            for i, image in enumerate(self.images.itervalues()):
                 image.predict_true_labels(avoid_if_finished=avoid_if_finished)
+
+                if self.debug > 1:
+                    if i % 1000 == 0:
+                        progress_bar.progress_bar(i, len(self.images), "Predicted labels for %d images" % (i,))
+            if self.debug > 1:
+                print() # clear to the next line
 
             # Estimate difficulty parameters for each image
             if self.learn_image_params:

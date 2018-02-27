@@ -58,6 +58,7 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
                  prob_correct_prior_beta=15,
                  prob_correct_prior=0.8,
                  prob_correct_beta=10,
+                 prob_correct=0.8,
 
                  # Global priors used to compute worker trust
                  prob_trust_prior_beta=15,
@@ -465,7 +466,7 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         worker_times = np.arange(len(winds))[::-1]
 
         # Compute the log likelihood of each class
-        y_keys = np.empty(taxonomy.num_leaf_nodes, dtype=np.int)
+        y_keys = []#np.empty(taxonomy.num_leaf_nodes, dtype=np.int)
         lls = np.empty(taxonomy.num_leaf_nodes, dtype=np.float)
         y_index = 0
         for y_node in taxonomy.leaf_nodes():
@@ -537,12 +538,12 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
                     ll_y += num
 
             lls[y_index] = ll_y
-            y_keys[y_index] = y
+            y_keys.append(y) #y_keys[y_index] = y
             y_index += 1
 
         sidx = np.argsort(lls)[::-1]
         lls = lls[sidx]
-        y_keys = y_keys[sidx]
+        y_keys = np.array(y_keys)[sidx]
 
         pred_y = y_keys[0]
         self.y = CrowdLabelMulticlassSingleBinomial(

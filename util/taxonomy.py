@@ -106,6 +106,7 @@ class Taxonomy(object):
         # precomputed return values
         # Computed after we are finalized
         self.num_leaf_nodes = 0
+        self.num_inner_nodes = 0
         self.node_level_map = None  # {key : {level : key}}
         self._leaf_nodes = None
         self._inner_nodes = None
@@ -137,9 +138,7 @@ class Taxonomy(object):
 
         self._make_level_map()
         self.num_leaf_nodes = len(self.leaf_nodes())
-
-        if self._inner_nodes is None:
-            _ = self.inner_nodes()
+        self.num_inner_nodes = len(self.inner_nodes())
 
         self.finalized = True
 
