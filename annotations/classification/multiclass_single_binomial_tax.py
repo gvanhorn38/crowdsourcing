@@ -522,14 +522,15 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
 
         for worker in self.workers.itervalues():
             if avoid_if_finished and worker.finished:
-                worker.build_M_and_N() # make sure the worker has their M and N matrices
+                #if worker.M is None:
+                #    worker.build_M_and_N() # make sure the worker has their M and N matrices
                 continue
 
             if self.model_worker_trust:
                 worker.prob_trust = self.prob_trust
 
             worker.skill_vector = np.copy(self.default_skill_vector)
-            worker.build_M_and_N()
+            #worker.build_M_and_N()
 
     def parse(self, data):
         super(CrowdDatasetMulticlassSingleBinomial, self).parse(data)
@@ -611,8 +612,9 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         for anno in self.z.itervalues():
             if not anno.is_computer_vision() or ncv:
                 #M[w] = anno.worker.M.toarray()
-                M[w] = anno.worker.M
-                N[w] = anno.worker.N
+                wM, wN = anno.worker.build_M_and_N()
+                M[w] = wM
+                N[w] = wN
                 integer_label = self.params.orig_node_key_to_integer_id[anno.label]
                 worker_labels[w] = integer_label
                 worker_prob_trust[w] = anno.worker.prob_trust
@@ -820,6 +822,8 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
         self.encode_exclude['_rec_cache'] = True
 
         self.skill_vector = None
+        self.M = None
+        self.N = None
         self.encode_exclude['M'] = True
         self.encode_exclude['N'] = True
 
@@ -886,7 +890,7 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
         denom = self.params.prob_correct_beta + skill_counts_denom
         denom = np.clip(denom, a_min=0.00000001, a_max=None)
         self.skill_vector = np.clip(num / denom, a_min=0.00000001, a_max=0.99999)
-        self.build_M_and_N()
+        #self.build_M_and_N()
 
         # Placeholder for skills
         total_num_correct = 0.
@@ -936,8 +940,7 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
 
     def build_M_and_N(self):
 
-        # Build the M matrix. This is a block diagonal matrix that is essentially a confusion matrix
-        # across the sibling nodes for each parent node.
+        # Build the M matrix.
         # The size will be [num nodes, num nodes]
         # M[y, z] is the probability of predicting class z when the true class is y.
         num_nodes = self.params.node_priors.shape[0]
@@ -959,7 +962,7 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
             M[np.ix_(sibling_indices, sibling_indices)] = np.tile(ppnc, [num_siblings, 1])
             # Set the diagonal to the probability of being correct
             M[sibling_indices, sibling_indices] = pc
-        self.M = M
+        #self.M = M
 
         # blks = [np.array([1])] # Store a skill value of 1 for the root node (we do this to keep the indexing constant)
         # for node_indices in self.params.parent_and_siblings_indices:
@@ -985,7 +988,7 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
         # Build the N vector. This is the probability of a worker selecting a node regardless
         # of the true value (i.e. when the parent nodes are different)
         num_nodes = len(self.params.taxonomy.nodes)
-        self.N = np.ones([num_nodes], dtype=np.float32) # This will store a value of 1 for the root node. We do this to keep the indexing constant
+        N = np.ones([num_nodes], dtype=np.float32) # This will store a value of 1 for the root node. We do this to keep the indexing constant
 
         # Get the probability of not correct
         pc = self.skill_vector[self.params.parent_indices]
@@ -993,7 +996,9 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
 
         # Multiply the probability of not correct by the prior on the node
         ppnc = self.params.node_priors[1:] * pnc
-        self.N[1:] = ppnc # don't overwrite the root node.
+        N[1:] = ppnc # don't overwrite the root node.
+
+        return M, N
 
     def parse(self, data):
         super(CrowdWorkerMulticlassSingleBinomial, self).parse(data)
