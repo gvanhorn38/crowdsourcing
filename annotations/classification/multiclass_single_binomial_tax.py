@@ -351,6 +351,44 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
         self.annotation_probs_insert_from_N = np.array(annotation_probs_insert_from_N, dtype=np.intp)
         self.annotation_probs_N_indices = np.array(annotation_probs_N_indices, dtype=np.intp)
 
+
+        # Construct index arrays that will be used to create the M matrix
+        skill_vector_correct_read_indices = []
+        M_correct_rows = []
+        M_correct_cols = []
+        skill_vector_incorrect_read_indices = []
+        skill_vector_node_priors_read_indices = []
+        M_incorrect_rows = []
+        M_incorrect_cols = []
+        for node_indices in parent_and_siblings_indices:
+            parent_index = node_indices[0]
+            sibling_indices = node_indices[1:]
+            num_siblings = len(sibling_indices)
+
+            # Copy the parent node skill to the children (at the diagonal)
+            skill_vector_correct_read_indices += [parent_index] * num_siblings
+            M_correct_rows += sibling_indices
+            M_correct_cols += sibling_indices
+
+            for r in sibling_indices:
+                for c in sibling_indices:
+                    if r == c:
+                        continue
+
+                    # M[r, c] is the probability worker says c when the ground truth is r
+                    skill_vector_incorrect_read_indices.append(parent_index)
+                    skill_vector_node_priors_read_indices.append(c)
+                    M_incorrect_rows.append(r)
+                    M_incorrect_cols.append(c)
+
+        self.skill_vector_correct_read_indices = np.array(skill_vector_correct_read_indices, np.intp)
+        self.M_correct_rows = np.array(M_correct_rows, np.intp)
+        self.M_correct_cols = np.array(M_correct_cols, np.intp)
+        self.skill_vector_incorrect_read_indices = np.array(skill_vector_incorrect_read_indices, np.intp)
+        self.skill_vector_node_priors_read_indices = np.array(skill_vector_node_priors_read_indices, np.intp)
+        self.M_incorrect_rows = np.array(M_incorrect_rows, np.intp)
+        self.M_incorrect_cols = np.array(M_incorrect_cols, np.intp)
+
         # Construct a vector holding the default skill priors for a worker
         self.default_skill_vector = np.ones(self.taxonomy.num_inner_nodes, dtype=np.float32) * self.prob_correct
         self.pooled_prob_correct_vector = np.ones(self.taxonomy.num_inner_nodes, dtype=np.float32) * self.prob_correct_prior
@@ -369,6 +407,15 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
         self.encode_exclude['annotation_probs_M_indices'] = True
         self.encode_exclude['annotation_probs_insert_from_N'] = True
         self.encode_exclude['annotation_probs_N_indices'] = True
+
+        self.encode_exclude['skill_vector_correct_read_indices'] = True
+        self.encode_exclude['M_correct_rows'] = True
+        self.encode_exclude['M_correct_cols'] = True
+        self.encode_exclude['skill_vector_incorrect_read_indices'] = True
+        self.encode_exclude['skill_vector_node_priors_read_indices'] = True
+        self.encode_exclude['M_incorrect_rows'] = True
+        self.encode_exclude['M_incorrect_cols'] = True
+
         self.encode_exclude['default_skill_vector'] = True
         self.encode_exclude['pooled_prob_correct_vector'] = True
 
@@ -945,23 +992,37 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
         # M[y, z] is the probability of predicting class z when the true class is y.
         num_nodes = self.params.node_priors.shape[0]
         M = np.zeros([num_nodes, num_nodes], dtype=np.float32)
-        for node_indices in self.params.parent_and_siblings_indices:
-            parent_index = node_indices[0]
-            sibling_indices = node_indices[1:]
-            num_siblings = len(sibling_indices)
 
-            # Probability of correct and not correct
-            pc = self.skill_vector[parent_index]
-            pnc = 1 - pc
+        # Fill in the diagonals
+        M[self.params.M_correct_rows, self.params.M_correct_cols] = self.skill_vector[self.params.skill_vector_correct_read_indices]
 
-            # Multiply the probability of not correct by the prior on the node
-            ppnc = self.params.node_priors[sibling_indices] * pnc
+        # Fill in the off diagonals
+        pnc = 1 - self.skill_vector[self.params.skill_vector_incorrect_read_indices]
+        ppnc = pnc * self.params.node_priors[self.params.skill_vector_node_priors_read_indices]
+        M[self.params.M_incorrect_rows, self.params.M_incorrect_cols] = ppnc
 
-            # M[y,z] = the probability of predicting class z when the true class is y.
-            # Set the off diagonal entries to the probability of not being correct times the node prior
-            M[np.ix_(sibling_indices, sibling_indices)] = np.tile(ppnc, [num_siblings, 1])
-            # Set the diagonal to the probability of being correct
-            M[sibling_indices, sibling_indices] = pc
+        # Build the M matrix.
+        # The size will be [num nodes, num nodes]
+        # M[y, z] is the probability of predicting class z when the true class is y.
+        # num_nodes = self.params.node_priors.shape[0]
+        # M = np.zeros([num_nodes, num_nodes], dtype=np.float32)
+        # for node_indices in self.params.parent_and_siblings_indices:
+        #     parent_index = node_indices[0]
+        #     sibling_indices = node_indices[1:]
+        #     num_siblings = len(sibling_indices)
+
+        #     # Probability of correct and not correct
+        #     pc = self.skill_vector[parent_index]
+        #     pnc = 1 - pc
+
+        #     # Multiply the probability of not correct by the prior on the node
+        #     ppnc = self.params.node_priors[sibling_indices] * pnc
+
+        #     # M[y,z] = the probability of predicting class z when the true class is y.
+        #     # Set the off diagonal entries to the probability of not being correct times the node prior
+        #     M[np.ix_(sibling_indices, sibling_indices)] = np.tile(ppnc, [num_siblings, 1])
+        #     # Set the diagonal to the probability of being correct
+        #     M[sibling_indices, sibling_indices] = pc
         #self.M = M
 
         # blks = [np.array([1])] # Store a skill value of 1 for the root node (we do this to keep the indexing constant)
