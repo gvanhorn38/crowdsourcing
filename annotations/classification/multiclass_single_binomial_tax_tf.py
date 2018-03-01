@@ -287,11 +287,15 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
 
         # These are precomputed index lists that will allow us to copy over values from M and N into a
         # annotation probability tensor
-        annotation_probs_insert_from_M = [[], [], []]
-        annotation_probs_M_indices = [[], []]
+        annotation_probs_insert_from_M = []
+        annotation_probs_M_indices = []
 
-        annotation_probs_insert_from_N = [[], [], []]
-        annotation_probs_N_indices = [[]]
+        #annotation_probs_insert_from_N = [[], [], []]
+        annotation_probs_insert_from_N = []
+        annotation_probs_N_indices = []
+
+        annotation_probs_insert_ones = []
+        annotation_probs_1_data = []
 
         # Build up the integer array indices to fill in annotation_probs
         # For each class label y
@@ -300,7 +304,7 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
             path_to_y = class_node_index_list_padded_neg_1[y]
 
             # Consider each possible annotation z
-            for z in xrange(1, num_nodes): # We can ignore annotations at the root.
+            for z in xrange(num_nodes): # We can ignore annotations at the root.
                 # Get the node index path from the root node to z
                 path_to_z = anno_node_index_list_padded_neg_2[z]
                 z_depth = np.sum(path_to_z >= 0)
@@ -308,49 +312,50 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
 
                 # For each node on the path from root->y and root->z,
                 # select from either M or N depending on if the nodes match
-                for i, (y_node_index, z_node_index) in enumerate(zip(path_to_y[:z_level], path_to_z[:z_level])):
+                for i, (y_node_index, z_node_index) in enumerate(zip(path_to_y[:-1], path_to_z[:-1])):
 
-                    # The nodes match
-                    if y_node_index == z_node_index:
-                        # Index into M using the children indices
-                        y_node_child_index = path_to_y[i+1]
-                        z_node_child_index = path_to_z[i+1]
+                    if i >= z_level:
+                        annotation_probs_insert_ones.append([y, z, i])
+                        annotation_probs_1_data.append(1)
 
-                        assert y_node_child_index > 0
-                        assert z_node_child_index > 0
+                    else:
+                        # The nodes match
+                        if y_node_index == z_node_index:
+                            # Index into M using the children indices
+                            y_node_child_index = path_to_y[i+1]
+                            z_node_child_index = path_to_z[i+1]
 
-                        # Add the indices of where we will access M to get the probability value
-                        annotation_probs_M_indices[0].append(y_node_child_index)
-                        annotation_probs_M_indices[1].append(z_node_child_index)
+                            assert y_node_child_index > 0
+                            assert z_node_child_index > 0
 
-                        # Add the indices of where we will store the value of M into the annotation_probs matrix
-                        annotation_probs_insert_from_M[0].append(y)
-                        annotation_probs_insert_from_M[1].append(z)
-                        annotation_probs_insert_from_M[2].append(i)
+                            # Add the indices of where we will access M to get the probability value
+                            annotation_probs_M_indices.append([y_node_child_index, z_node_child_index])
 
-                    # The nodes do not match and the path has not ended
-                    elif z_node_index >= 0:
+                            # Add the indices of where we will store the value of M into the annotation_probs matrix
+                            annotation_probs_insert_from_M.append([y, z, i])
 
-                        # index into N using the child of z
-                        z_node_child_index = path_to_z[i+1]
+                        # The nodes do not match and the path has not ended
+                        elif z_node_index >= 0:
 
-                        # If we haven't reached level(z), and the parent is not negative,
-                        # then the child should not be negative either.
-                        assert z_node_child_index >= 0
+                            # index into N using the child of z
+                            z_node_child_index = path_to_z[i+1]
 
-                        # Add the indices of where we will access N to get the probability value
-                        annotation_probs_N_indices[0].append(z_node_child_index)
+                            # If we haven't reached level(z), and the parent is not negative,
+                            # then the child should not be negative either.
+                            assert z_node_child_index >= 0
 
-                        # Add the indices of where we will store the value of N into the annotation_probs matrix
-                        annotation_probs_insert_from_N[0].append(y)
-                        annotation_probs_insert_from_N[1].append(z)
-                        annotation_probs_insert_from_N[2].append(i)
+                            # Add the indices of where we will access N to get the probability value
+                            annotation_probs_N_indices.append(z_node_child_index)
+
+                            # Add the indices of where we will store the value of N into the annotation_probs matrix
+                            annotation_probs_insert_from_N.append([y, z, i])
 
         self.annotation_probs_insert_from_M = np.array(annotation_probs_insert_from_M, dtype=np.intp)
         self.annotation_probs_M_indices = np.array(annotation_probs_M_indices, dtype=np.intp)
         self.annotation_probs_insert_from_N = np.array(annotation_probs_insert_from_N, dtype=np.intp)
         self.annotation_probs_N_indices = np.array(annotation_probs_N_indices, dtype=np.intp)
-
+        self.annotation_probs_insert_ones = np.array(annotation_probs_insert_ones, dtype=np.intp)
+        self.annotation_probs_1_data = np.array(annotation_probs_1_data, dtype=np.float32)
 
         # Construct index arrays that will be used to create the M matrix
         skill_vector_correct_read_indices = []
