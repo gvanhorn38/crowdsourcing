@@ -37,6 +37,37 @@ from scipy.sparse import block_diag as sparse_block_diag
 from ...crowdsourcing import CrowdDataset, CrowdImage, CrowdWorker, CrowdLabel
 from ...util.taxonomy import Taxonomy
 
+import ctypes
+from numpy.ctypeslib import ndpointer
+lib = ctypes.cdll.LoadLibrary("/Users/GVH/Desktop/inat_tax_expr/annoprobs.so")
+build_worker_annotation_probs = lib.build_worker_annotation_probs
+build_worker_annotation_probs.restype = None
+build_worker_annotation_probs.argtypes = [
+    ctypes.c_int,
+    ctypes.c_int,
+    ndpointer(ctypes.c_float),
+    ndpointer(ctypes.c_float),
+    ndpointer(ctypes.c_int),
+    ndpointer(ctypes.c_int),
+    ndpointer(ctypes.c_int)
+]
+# build_worker_annotation_probs = lib.do_both
+# build_worker_annotation_probs.restype = None
+# build_worker_annotation_probs.argtypes = [
+#     ctypes.c_int,
+#     ctypes.c_int,
+#     ctypes.c_int,
+#     ndpointer(ctypes.c_float),
+#     ndpointer(ctypes.c_float),
+#     ndpointer(ctypes.c_int),
+#     ndpointer(ctypes.c_int),
+#     ndpointer(ctypes.c_int),
+#     ndpointer(ctypes.c_float),
+#     ndpointer(ctypes.c_int)
+# ]
+
+
+
 class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
     """ A dataset for multiclass labeling across a taxonomy.
     """
@@ -170,45 +201,33 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
         assert self.taxonomy.finalized, "The taxonomy must be finalized."
         assert self.taxonomy.priors_initialized, "The taxonomy priors must be initialized."
 
-        # for node in self.taxonomy.breadth_first_traversal():
-        #     print(node.key)
-        #     print("\t" + ", ".join(node.children.keys()))
-        #     print
 
-        # We are going to remap the taxonomy to a flat vector
+        ########################
+        # Assign integer ids to each node in the taxonomy.
         orig_node_key_to_integer_id = {}
         integer_id_to_orig_node_key = {}
-        # We want the inner nodes to be [0, num inner nodes) integer ids
-        # This is because its the inner nodes that contain the skill values
-        for i, node in enumerate(self.taxonomy.inner_nodes()):
-            orig_node_key_to_integer_id[node.key] = i
-            integer_id_to_orig_node_key[i] = node.key
-        num_inner_nodes = i + 1
-        id_offset = i + 1
-
-        # Add the leaf nodes
         leaf_node_key_set = set()
         leaf_integer_ids = []
-        for i, node in enumerate(self.taxonomy.leaf_nodes()):
-            leaf_node_key_set.add(node.key)
-            integer_id = i + id_offset
+        # We are going to number the nodes based on breadth first search.
+        for integer_id, node in enumerate(self.taxonomy.breadth_first_traversal()):
             orig_node_key_to_integer_id[node.key] = integer_id
             integer_id_to_orig_node_key[integer_id] = node.key
-            leaf_integer_ids.append(integer_id)
+            if node.is_leaf:
+                leaf_node_key_set.add(node.key)
+                leaf_integer_ids.append(integer_id)
         self.orig_node_key_to_integer_id = orig_node_key_to_integer_id
         self.integer_id_to_orig_node_key = integer_id_to_orig_node_key
-        self.leaf_integer_ids = np.array(leaf_integer_ids, dtype=np.intp)
+        self.leaf_integer_ids = np.array(leaf_integer_ids, dtype=np.int32)
         self.leaf_node_key_set = leaf_node_key_set
         self.leaf_node_keys = list(leaf_node_key_set)
-
-        # kis = orig_node_key_to_integer_id.items()
-        # kis.sort(key=lambda x: x[1])
-        # for k, i in kis:
-        #     print("%s : %d" % (k, i))
+        self.encode_exclude['orig_node_key_to_integer_id'] = True
+        self.encode_exclude['integer_id_to_orig_node_key'] = True
+        self.encode_exclude['leaf_integer_ids'] = True
+        self.encode_exclude['leaf_node_key_set'] = True
+        self.encode_exclude['leaf_node_keys'] = True
 
         # Now its important that the remaining data structures respect the ordering
-        # that we just created. Namely, breadth first traversal might not give the
-        # correct ordering anymore, so we want to just use the integer ids.
+        # that we just created.
         num_nodes = len(self.taxonomy.nodes)
 
         # Create a node prior vector
@@ -218,43 +237,84 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
             node = self.taxonomy.nodes[k]
             node_priors[integer_id] = node.data['prob']
         self.node_priors = node_priors
+        self.encode_exclude['node_priors'] = True
 
-        # For each parent node this stores the parent index and children indices
-        # First value is the parent index, remaining values are the sibling indices. This is used to construct
-        # the M matrix for the workers
-        parent_and_siblings_indices = []
-        for integer_id in xrange(num_inner_nodes):
+        # Store the paths from the root node to each other node.
+        # NOTE: this is redundant with path_to_node below.
+        root_to_node_path_list = {}
+        for integer_id in xrange(num_nodes):
             k = integer_id_to_orig_node_key[integer_id]
-            parent_node = self.taxonomy.nodes[k]
-            sibling_integer_ids = [orig_node_key_to_integer_id[k] for k in parent_node.children]
-            #sibling_integer_ids.sort()
-            ps = [integer_id] + sibling_integer_ids
-            parent_and_siblings_indices.append(ps)
-        self.parent_and_siblings_indices = parent_and_siblings_indices
+            node = self.taxonomy.nodes[k]
+
+            # Path from the parent node to root
+            orig_path = [ancestor.key for ancestor in node.ancestors]
+            # Path from the root to the parent node
+            orig_path.reverse()
+            # Path from the root to the node
+            orig_path += [node.key]
+            # Get the integer ids for this path
+            integer_id_path = [orig_node_key_to_integer_id[k] for k in orig_path]
+
+            root_to_node_path_list[integer_id] = integer_id_path
+        self.root_to_node_path_list = root_to_node_path_list
+        self.encode_exclude['root_to_node_path_list'] = True
+
+        # Create a map that goes from an internal node's integer id to it's
+        # parent index in the skill vector
+        internal_node_integer_id_to_skill_vector_index = {}
+        skill_vector_index = 0
+        for integer_id in xrange(num_nodes):
+            k = integer_id_to_orig_node_key[integer_id]
+            node = self.taxonomy.nodes[k]
+            if not node.is_leaf:
+                internal_node_integer_id_to_skill_vector_index[integer_id] = skill_vector_index
+                skill_vector_index += 1
+        self.internal_node_integer_id_to_skill_vector_index = internal_node_integer_id_to_skill_vector_index
+        self.encode_exclude['internal_node_integer_id_to_skill_vector_index'] = True
+
+        # And we want an array of size [num_nodes -1] that we will use to index into the skill vector
+        # when computing the N vector
+        skill_vector_N_indices = np.zeros([num_nodes -1], dtype=np.int32)
+        for integer_id in xrange(1, num_nodes):
+            k = integer_id_to_orig_node_key[integer_id]
+            node = self.taxonomy.nodes[k]
+            parent_node = node.parent
+            parent_integer_id = orig_node_key_to_integer_id[parent_node.key]
+            parent_skill_vector_index = internal_node_integer_id_to_skill_vector_index[parent_integer_id]
+            skill_vector_N_indices[integer_id-1] = parent_skill_vector_index
+        self.skill_vector_N_indices = skill_vector_N_indices
+        self.encode_exclude['skill_vector_N_indices'] = True
+        #
+        #########################
 
 
+        #########################
+        # The following data structures are used to compute p(z | y, w) using
+        # a workers M[num_nodes -1][num_nodes -1] matrix and N[num_nodes -1] vector
+        # These computations don't involve the root node, hence the -1 everywhere.
 
-        # For each child node this store the parent index
+        # For each child node this stores the parent index
         # This is used to construct the N matrix for workers.
-        parent_indices = []
+        parent_indices = [] # [num_nodes -1]
         for integer_id in xrange(num_nodes):
             k = integer_id_to_orig_node_key[integer_id]
             node = self.taxonomy.nodes[k]
             if not node.is_root:
                 parent_integer_id = orig_node_key_to_integer_id[node.parent.key]
                 parent_indices.append(parent_integer_id)
-        self.parent_indices = parent_indices
+        self.parent_indices = np.array(parent_indices, np.int32) - 1 # shift everthing down by 1 (accounting for the loss of the root)
+        self.encode_exclude['parent_indices'] = True
 
         # For each child node, store its level
-        levels = []
+        levels = [] # [num_nodes -1]
         for integer_id in xrange(num_nodes):
             k = integer_id_to_orig_node_key[integer_id]
             node = self.taxonomy.nodes[k]
             if not node.is_root:
                 levels.append(node.level)
-        self.levels = levels
+        self.levels = np.array(levels, dtype=np.int32)
+        self.encode_exclude['levels'] = True
 
-        num_classes = self.taxonomy.num_leaf_nodes
         max_path_length = self.taxonomy.max_depth + 1
 
         # For each child node, store the path to the node, padded with -1
@@ -268,119 +328,16 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
                 path_to_node[integer_id - 1, i] = a
         path_to_node = path_to_node - 1 # shift everthing down by 1 (accounting for the loss of the root)
         self.path_to_node = path_to_node
+        self.encode_exclude['path_to_node'] = True
+        #
+        #########################
 
+        #########################
+        # Construct index arrays that will be used to create the M matrix for each worker.
+        # Since we are using a single binomial model, we can store one value in a vector
+        # of length `num_inner_nodes` for each worker.
 
-        if False:
-            # Path from the root node to each possible classification node
-            # Pad with negative 1 so that each path length is the same.
-            class_node_index_list_padded_neg_1 = np.ones([num_classes, max_path_length], np.intp) * -1
-
-            # Path from the root node to each possible annotation node
-            # We'll pad with -2 in this case to prevent matching the -1 padding from `class_node_index_list_padded_neg_1`
-            anno_node_index_list_padded_neg_2 = np.ones([num_nodes, max_path_length], dtype=np.intp) * -2
-
-            class_index = 0
-            root_to_node_path_list = {}
-            for integer_id in xrange(num_nodes):
-                k = integer_id_to_orig_node_key[integer_id]
-                node = self.taxonomy.nodes[k]
-
-                # Path from the parent node to root
-                orig_path = [ancestor.key for ancestor in node.ancestors]
-                # Path from the root to the parent node
-                orig_path.reverse()
-                # Path from the root to the node
-                orig_path += [node.key]
-                # Get the integer ids for this path
-                integer_id_path = [orig_node_key_to_integer_id[k] for k in orig_path]
-                # Sanity checking the values. All inner nodes should have an index less than the total number of inner nodes.
-                if len(integer_id_path[:-1]):
-                    assert max(integer_id_path[:-1]) < self.taxonomy.num_inner_nodes
-
-                anno_node_index_list_padded_neg_2[integer_id, :len(integer_id_path)] = integer_id_path
-                root_to_node_path_list[integer_id] = integer_id_path
-
-                # Store the class labels in their own matrix as well
-                if node.is_leaf:
-                    class_node_index_list_padded_neg_1[class_index, :len(integer_id_path)] = integer_id_path
-                    class_index += 1
-            self.class_node_index_list_padded_neg_1 = class_node_index_list_padded_neg_1
-            self.anno_node_index_list_padded_neg_2 = anno_node_index_list_padded_neg_2
-            self.root_to_node_path_list = root_to_node_path_list
-
-            # These are precomputed index lists that will allow us to copy over values from M and N into a
-            # annotation probability tensor
-            annotation_probs_insert_from_M = []
-            annotation_probs_M_indices = []
-
-            #annotation_probs_insert_from_N = [[], [], []]
-            annotation_probs_insert_from_N = []
-            annotation_probs_N_indices = []
-
-            annotation_probs_insert_ones = []
-            annotation_probs_1_data = []
-
-            # Build up the integer array indices to fill in annotation_probs
-            # For each class label y
-            for y in xrange(num_classes):
-                # Get the node index path from the root node to y
-                path_to_y = class_node_index_list_padded_neg_1[y]
-
-                # Consider each possible annotation z
-                for z in xrange(num_nodes): # We can ignore annotations at the root.
-                    # Get the node index path from the root node to z
-                    path_to_z = anno_node_index_list_padded_neg_2[z]
-                    z_depth = np.sum(path_to_z >= 0)
-                    z_level = z_depth - 1
-
-                    # For each node on the path from root->y and root->z,
-                    # select from either M or N depending on if the nodes match
-                    for i, (y_node_index, z_node_index) in enumerate(zip(path_to_y[:-1], path_to_z[:-1])):
-
-                        if i >= z_level:
-                            annotation_probs_insert_ones.append([y, z, i])
-                            annotation_probs_1_data.append(1)
-
-                        else:
-                            # The nodes match
-                            if y_node_index == z_node_index:
-                                # Index into M using the children indices
-                                y_node_child_index = path_to_y[i+1]
-                                z_node_child_index = path_to_z[i+1]
-
-                                assert y_node_child_index > 0
-                                assert z_node_child_index > 0
-
-                                # Add the indices of where we will access M to get the probability value
-                                annotation_probs_M_indices.append([y_node_child_index, z_node_child_index])
-
-                                # Add the indices of where we will store the value of M into the annotation_probs matrix
-                                annotation_probs_insert_from_M.append([y, z, i])
-
-                            # The nodes do not match and the path has not ended
-                            elif z_node_index >= 0:
-
-                                # index into N using the child of z
-                                z_node_child_index = path_to_z[i+1]
-
-                                # If we haven't reached level(z), and the parent is not negative,
-                                # then the child should not be negative either.
-                                assert z_node_child_index >= 0
-
-                                # Add the indices of where we will access N to get the probability value
-                                annotation_probs_N_indices.append(z_node_child_index)
-
-                                # Add the indices of where we will store the value of N into the annotation_probs matrix
-                                annotation_probs_insert_from_N.append([y, z, i])
-
-            self.annotation_probs_insert_from_M = np.array(annotation_probs_insert_from_M, dtype=np.intp)
-            self.annotation_probs_M_indices = np.array(annotation_probs_M_indices, dtype=np.intp)
-            self.annotation_probs_insert_from_N = np.array(annotation_probs_insert_from_N, dtype=np.intp)
-            self.annotation_probs_N_indices = np.array(annotation_probs_N_indices, dtype=np.intp)
-            self.annotation_probs_insert_ones = np.array(annotation_probs_insert_ones, dtype=np.intp)
-            self.annotation_probs_1_data = np.array(annotation_probs_1_data, dtype=np.float32)
-
-        # Construct index arrays that will be used to create the M matrix
+        # M is going to be a block diagonal matrix
         skill_vector_correct_read_indices = []
         M_correct_rows = []
         M_correct_cols = []
@@ -388,26 +345,57 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
         skill_vector_node_priors_read_indices = []
         M_incorrect_rows = []
         M_incorrect_cols = []
-        for node_indices in parent_and_siblings_indices:
-            parent_index = node_indices[0]
-            sibling_indices = node_indices[1:]
-            num_siblings = len(sibling_indices)
+        cur_block_index = 0
+        skill_vector_index = 0
+        for integer_id in xrange(num_nodes):
+            k = integer_id_to_orig_node_key[integer_id]
+            parent_node = self.taxonomy.nodes[k]
+            if not parent_node.is_leaf:
+                num_children = len(parent_node.children)
+                children_integer_ids = [orig_node_key_to_integer_id[k] for k in parent_node.children]
 
-            # Copy the parent node skill to the children (at the diagonal)
-            skill_vector_correct_read_indices += [parent_index] * num_siblings
-            M_correct_rows += sibling_indices
-            M_correct_cols += sibling_indices
+                # Read num_children times from the skill vector at the parent node
+                skill_vector_correct_read_indices += [skill_vector_index] * num_children
+                # Write to the diagonal
+                write_to = range(cur_block_index, cur_block_index + num_children)
+                M_correct_rows += write_to
+                M_correct_cols += write_to
 
-            for r in sibling_indices:
-                for c in sibling_indices:
-                    if r == c:
-                        continue
+                # Fill in the off diagonal of the block
+                # M[r, c] is the probability worker says c when the ground truth is r
+                # HOWEVER, we are going to create M transpose!
+                # So we want to create M[c, r] the probability a worker says c when the ground truth is r
+                if False:
+                    for child_integer_id, c in zip(children_integer_ids, range(cur_block_index, cur_block_index + num_children)):
+                        for r in range(cur_block_index, cur_block_index + num_children):
+                            if r == c:
+                                continue
 
-                    # M[r, c] is the probability worker says c when the ground truth is r
-                    skill_vector_incorrect_read_indices.append(parent_index)
-                    skill_vector_node_priors_read_indices.append(c)
-                    M_incorrect_rows.append(r)
-                    M_incorrect_cols.append(c)
+                            # Read from the skill vector
+                            skill_vector_incorrect_read_indices.append(skill_vector_index)
+                            # We'll multiply the skill value by the prior of the row node
+                            skill_vector_node_priors_read_indices.append(child_integer_id)
+
+                            # Write into M[c, r]
+                            M_incorrect_rows.append(c)
+                            M_incorrect_cols.append(r)
+                else:
+                    for r in range(cur_block_index, cur_block_index + num_children):
+                        for child_integer_id, c in zip(children_integer_ids, range(cur_block_index, cur_block_index + num_children)):
+                            if r == c:
+                                continue
+
+                            # Read from the skill vector
+                            skill_vector_incorrect_read_indices.append(skill_vector_index)
+                            # We'll multiply the skill value by the prior of the row node
+                            skill_vector_node_priors_read_indices.append(child_integer_id)
+
+                            # Write into M[c, r]
+                            M_incorrect_rows.append(r)
+                            M_incorrect_cols.append(c)
+
+                cur_block_index += num_children
+                skill_vector_index += 1
 
         self.skill_vector_correct_read_indices = np.array(skill_vector_correct_read_indices, np.intp)
         self.M_correct_rows = np.array(M_correct_rows, np.intp)
@@ -416,26 +404,6 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
         self.skill_vector_node_priors_read_indices = np.array(skill_vector_node_priors_read_indices, np.intp)
         self.M_incorrect_rows = np.array(M_incorrect_rows, np.intp)
         self.M_incorrect_cols = np.array(M_incorrect_cols, np.intp)
-
-        # Construct a vector holding the default skill priors for a worker
-        self.default_skill_vector = np.ones(self.taxonomy.num_inner_nodes, dtype=np.float32) * self.prob_correct
-        self.pooled_prob_correct_vector = np.ones(self.taxonomy.num_inner_nodes, dtype=np.float32) * self.prob_correct_prior
-
-        self.encode_exclude['orig_node_key_to_integer_id'] = True
-        self.encode_exclude['integer_id_to_orig_node_key'] = True
-        self.encode_exclude['leaf_integer_ids'] = True
-        self.encode_exclude['leaf_node_key_set'] = True
-        self.encode_exclude['leaf_node_keys'] = True
-        self.encode_exclude['node_priors'] = True
-        self.encode_exclude['parent_and_siblings_indices'] = True
-        self.encode_exclude['parent_indices'] = True
-        self.encode_exclude['class_node_index_list_padded_neg_1'] = True
-        self.encode_exclude['anno_node_index_list_padded_neg_2'] = True
-        self.encode_exclude['annotation_probs_insert_from_M'] = True
-        self.encode_exclude['annotation_probs_M_indices'] = True
-        self.encode_exclude['annotation_probs_insert_from_N'] = True
-        self.encode_exclude['annotation_probs_N_indices'] = True
-
         self.encode_exclude['skill_vector_correct_read_indices'] = True
         self.encode_exclude['M_correct_rows'] = True
         self.encode_exclude['M_correct_cols'] = True
@@ -444,8 +412,12 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
         self.encode_exclude['M_incorrect_rows'] = True
         self.encode_exclude['M_incorrect_cols'] = True
 
+        # Construct a vector holding the default skill priors for a worker
+        self.default_skill_vector = np.ones(self.taxonomy.num_inner_nodes, dtype=np.float32) * self.prob_correct
+        self.pooled_prob_correct_vector = np.ones(self.taxonomy.num_inner_nodes, dtype=np.float32) * self.prob_correct_prior
         self.encode_exclude['default_skill_vector'] = True
         self.encode_exclude['pooled_prob_correct_vector'] = True
+
 
     def estimate_priors(self, gt_dataset=None):
         """Estimate the dataset-wide parameters.
@@ -650,7 +622,7 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         self.y = CrowdLabelMulticlassSingleBinomial(
             image=self, worker=None, label=pred_y)
 
-
+    #@profile
     def predict_true_labels(self, avoid_if_finished=False):
         """ Compute the y that is most likely given the annotations, worker
         skills, etc.
@@ -669,7 +641,7 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         num_nodes = node_priors.shape[0]
         num_classes = leaf_node_indices.shape[0]
 
-        node_labels = np.arange(num_nodes)
+        node_labels = np.arange(num_nodes - 1)
 
         max_path_length = self.params.taxonomy.max_depth + 1
 
@@ -678,18 +650,35 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         num_workers = sum([1 for anno in self.z.itervalues() if not anno.is_computer_vision() or ncv])
 
         # Collect the relevant data from each worker:
-        M = np.empty([num_workers, num_nodes, num_nodes], dtype=np.float32)
-        N = np.empty([num_workers, num_nodes], dtype=np.float32)
+        #M = np.empty([num_workers, num_nodes, num_nodes], dtype=np.float32)
+        #N = np.empty([num_workers, num_nodes], dtype=np.float32)
         worker_labels = np.empty(num_workers, dtype=np.intp)
         worker_prob_trust = np.empty(num_workers, dtype=np.float32)
+
+        # This gives us a [num_workers, num_classes, num_nodes - 1] tensor corresponding to the probability that
+        # a worker w provided annotation z given that the true class is y.
+        annotation_probs = np.empty([num_workers, num_classes, num_nodes - 1], dtype=np.float32)
+        #annotation_probs = np.ascontiguousarray(annotation_probs)
+
+        # parameters to `build_worker_annotation_probs`
+        parents = self.params.parent_indices # [n]
+        levels = self.params.levels # [n]
+        path_to_node = self.params.path_to_node # [n, d]
+        n, d = path_to_node.shape
 
         w = 0
         for anno in self.z.itervalues():
             if not anno.is_computer_vision() or ncv:
-                #M[w] = anno.worker.M.toarray()
                 wM, wN = anno.worker.build_M_and_N()
-                M[w] = wM
-                N[w] = wN
+
+                # modifies wM in place
+                #build_worker_annotation_probs(n, d, num_classes, wM, wN, parents, levels, path_to_node, annotation_probs[w], leaf_node_indices - 1)
+                #annotation_probs[w] = wM.T[leaf_node_indices - 1]
+
+                build_worker_annotation_probs(n, d, wM, wN, parents, levels, path_to_node)
+                annotation_probs[w] = wM[leaf_node_indices - 1]
+
+
                 integer_label = self.params.orig_node_key_to_integer_id[anno.label]
                 worker_labels[w] = integer_label
                 worker_prob_trust[w] = anno.worker.prob_trust
@@ -703,10 +692,10 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         # a node. Each entry [j, z] will be the probability of the previous
         # annotations given that the worker j provided label z.
         # Use 1s as the default value.
-        prob_prior_responses = np.ones((num_workers, num_nodes), dtype=np.float)
+        prob_prior_responses = np.ones((num_workers, num_nodes -1), dtype=np.float)
         if num_workers > 1:
-            previous_label = worker_labels[0]
-            worker_label = worker_labels[1]
+            previous_label = worker_labels[0] - 1 # to account for the loss of the root node
+            worker_label = worker_labels[1] # this indexes into node_prios, so don't subtract 1
             pt = worker_prob_trust[1]
             pnt = 1. - pt
             ppnt = (1. - pt) * node_priors[worker_label]
@@ -716,7 +705,7 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
             # Fill in the subsequent rows for each additional worker
             for wind in xrange(2, num_workers):
 
-                previous_label = worker_labels[wind-1]
+                previous_label = worker_labels[wind-1] -1 # minus 1 to account for the loss of the root node
                 worker_label = worker_labels[wind]
                 pt = worker_prob_trust[wind]
                 pnt = 1. - pt
@@ -729,7 +718,7 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
                 # The numerator values will be ppnt * X, except for the location
                 # where z == previous label, which will have the value pt * X
                 ppr = prob_prior_responses[wind - 1][previous_label] # p(H^{t-2} | z_j^{t-1}, w_j^{t-1})
-                num = np.full(shape=num_nodes, fill_value=ppnt * ppr) # fill in (1 - p_j)p(z_j) * p(H^{t-2} | z_j, w_j) for all values
+                num = np.full(shape=num_nodes-1, fill_value=ppnt * ppr) # fill in (1 - p_j)p(z_j) * p(H^{t-2} | z_j, w_j) for all values
                 num[previous_label] = pt * ppr # (this is where z == previous_label)
 
                 # Denominator: Sum( p(z | z_j^t, w_j^t) * p(H^{t-2} | z, w_j^{t-1}) )
@@ -748,50 +737,25 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         wind = 0
         for anno in self.z.values():
             if not anno.is_computer_vision() or ncv:
-                wl = worker_labels[wind]
+                wl = worker_labels[wind] -1 # to account for the loss of the root node
                 anno.prob_prev_annos = prob_prior_responses[wind, wl]
                 wind += 1
         # NOTE: see above (we needed to compute the likelihood of the annotations)
         if avoid_if_finished and self.finished:
             return
 
-
-        # Compute the likelihood of each possible annotation that a worker could provide
-        # Dimensions:
-        # 0th: worker index w
-        # 1st: class index y
-        # 2nd: annotation node index z
-        # 3rd: values from either M or N (or 1) along the taxonomic path from root->z
-        annotation_probs = np.ones((num_workers, num_classes, num_nodes, max_path_length - 1), dtype=np.float32)
-
-        # We've precomputed, for every path, which values need to be copied to which locations.
-        # Copy over the values from M for each worker
-        annotation_probs[:,
-                        self.params.annotation_probs_insert_from_M[0],
-                        self.params.annotation_probs_insert_from_M[1],
-                        self.params.annotation_probs_insert_from_M[2]] = M[:, self.params.annotation_probs_M_indices[0], self.params.annotation_probs_M_indices[1]]
-
-        # Copy over the values from N for each worker
-        annotation_probs[:,
-                        self.params.annotation_probs_insert_from_N[0],
-                        self.params.annotation_probs_insert_from_N[1],
-                        self.params.annotation_probs_insert_from_N[2]] = N[:, self.params.annotation_probs_N_indices[0]]
-
-        # Take the product along the taxonomic paths to get the probability of each possible annotation.
-        # We have to take the product due to the log being outside the sum in the denominator below.
-        annotation_probs = np.prod(annotation_probs, axis=3)
-        # This gives us a [num_workers, num_classes, num_nodes] tensor corresponding to the probability that
-        # a worker w provided annotation z given that the true class is y.
-
-        # We'll transpose so that we have classes first
+        # We'll transpose annotation_probs so that we have classes first
         annotation_probs = np.transpose(annotation_probs, axes=(1, 0, 2))
-        # This gives us a [num_classes, num_workers, num_nodes] tensor
+        # This gives us a [num_classes, num_workers, num_nodes -1] tensor
 
 
         # Now we want to compute p(y | Z) for each possible value of y
         # p(y | Z) = p(y) * Prod( p(z| y, H, w) )
         # = [ p(z| y, w) * p(H^t-1 | z, w) ] / [ Sum( p(z| y, w) * p(H^t-1 | z, w) ) ]
         # We'll be using logs, so the multiplication can be a sum and the division can be a subtraction.
+
+        # Shift all of the worker labels down by 1 to account for the loss of the root node
+        worker_labels = worker_labels - 1
 
         # Numerator
         # We'll use integer indexing, hence the use of np.arange(num_workers)
@@ -847,7 +811,7 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
             for w, anno in enumerate(self.z.itervalues()):
                  print(anno.worker.id)
                  print(anno.worker.skill)
-                 print(M[w, 60, 60])
+                 #print(M[w, 60, 60])
 
 
     def compute_log_likelihood(self):
@@ -937,6 +901,8 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
         skill_counts_num = np.zeros_like(self.params.pooled_prob_correct_vector)
         skill_counts_denom = np.zeros_like(self.params.pooled_prob_correct_vector)
 
+        internal_node_integer_id_to_skill_vector_index = self.params.internal_node_integer_id_to_skill_vector_index
+
         for image in self.images.itervalues():
 
             if len(image.z) <= 1:
@@ -948,27 +914,27 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
             y_node_list = self.params.root_to_node_path_list[y_integer_id]
             z_node_list = self.params.root_to_node_path_list[z_integer_id]
 
-            # update the denominator
-            skill_counts_denom[y_node_list[:-1]] += 1
 
-            # Traverse the paths and update the numerator when the nodes match
+
+
+            # Traverse the paths and update the counts.
             # Note that we update the parent count when the children match
             for child_node_index in range(1, len(y_node_list)):
                 y_parent_node = y_node_list[child_node_index - 1]
+                # update the denominator
+                skill_vector_index = internal_node_integer_id_to_skill_vector_index[y_parent_node]
+                skill_counts_denom[skill_vector_index] += 1
+
                 if child_node_index < len(z_node_list):
                     y_node = y_node_list[child_node_index]
                     z_node = z_node_list[child_node_index]
                     if y_node == z_node:
-                        skill_counts_num[y_parent_node] += 1
-                else:
-                    # we've exhausted the z node list
-                    break
+                        skill_counts_num[skill_vector_index] += 1
 
         num = self.params.prob_correct_beta * self.params.pooled_prob_correct_vector + skill_counts_num
         denom = self.params.prob_correct_beta + skill_counts_denom
         denom = np.clip(denom, a_min=0.00000001, a_max=None)
         self.skill_vector = np.clip(num / denom, a_min=0.00000001, a_max=0.99999)
-        #self.build_M_and_N()
 
         # Placeholder for skills
         total_num_correct = 0.
@@ -1017,17 +983,18 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
             self.skill.append(self.prob_trust)
 
     def build_M_and_N(self):
+        # NOTE: this return M.T!
 
         # Build the M matrix.
         # The size will be [num nodes, num nodes]
         # M[y, z] is the probability of predicting class z when the true class is y.
         num_nodes = self.params.node_priors.shape[0]
-        M = np.zeros([num_nodes, num_nodes], dtype=np.float32)
+        M = np.zeros([num_nodes - 1, num_nodes -1], dtype=np.float32)
 
-        # Fill in the diagonals
+        # Fill in the diagaonal of the block diagonals
         M[self.params.M_correct_rows, self.params.M_correct_cols] = self.skill_vector[self.params.skill_vector_correct_read_indices]
 
-        # Fill in the off diagonals
+        # Fill in the off diagonals entries of the block diagonals
         pnc = 1 - self.skill_vector[self.params.skill_vector_incorrect_read_indices]
         ppnc = pnc * self.params.node_priors[self.params.skill_vector_node_priors_read_indices]
         M[self.params.M_incorrect_rows, self.params.M_incorrect_cols] = ppnc
@@ -1079,16 +1046,16 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
 
         # Build the N vector. This is the probability of a worker selecting a node regardless
         # of the true value (i.e. when the parent nodes are different)
-        num_nodes = len(self.params.taxonomy.nodes)
-        N = np.ones([num_nodes], dtype=np.float32) # This will store a value of 1 for the root node. We do this to keep the indexing constant
+        #num_nodes = len(self.params.taxonomy.nodes)
+        #N = np.ones([num_nodes-1], dtype=np.float32) # This will store a value of 1 for the root node. We do this to keep the indexing constant
 
         # Get the probability of not correct
-        pc = self.skill_vector[self.params.parent_indices]
+        pc = self.skill_vector[self.params.skill_vector_N_indices]
         pnc = 1 - pc
 
         # Multiply the probability of not correct by the prior on the node
-        ppnc = self.params.node_priors[1:] * pnc
-        N[1:] = ppnc # don't overwrite the root node.
+        N = self.params.node_priors[1:] * pnc
+        #N[1:] = ppnc # don't overwrite the root node.
 
         return M, N
 
@@ -1128,6 +1095,8 @@ class CrowdLabelMulticlassSingleBinomial(CrowdLabel):
         prob_correct = self.worker.skill_vector
         node_probs = self.worker.params.node_priors
 
+        internal_node_integer_id_to_skill_vector_index = self.worker.params.internal_node_integer_id_to_skill_vector_index
+
         y = self.image.y.label
         z = self.label
 
@@ -1147,19 +1116,21 @@ class CrowdLabelMulticlassSingleBinomial(CrowdLabel):
             for i in range(len(z_node_list) - 1):
                 # Same parents
                 if y_node_list[i] == z_node_list[i]:
+                    skill_vector_index = internal_node_integer_id_to_skill_vector_index[y_node_list[i]]
                     # Same node
                     if y_node_list[i+1] == z_node_list[i+1]:
-                        ll += math.log(prob_correct[y_node_list[i]])
+                        ll += math.log(prob_correct[skill_vector_index])
                     # Different node
                     else:
-                        ll += math.log(1 - prob_correct[y_node_list[i]]) + math.log(node_probs[z_node_list[i+1]])
+                        ll += math.log(1 - prob_correct[skill_vector_index]) + math.log(node_probs[z_node_list[i+1]])
                 # Different parents
                 else:
-                    ll += math.log(1 - prob_correct[z_node_list[i]]) + math.log(node_probs[z_node_list[i+1]])
+                    skill_vector_index = internal_node_integer_id_to_skill_vector_index[z_node_list[i]]
+                    ll += math.log(1 - prob_correct[skill_vector_index]) + math.log(node_probs[z_node_list[i+1]])
 
         if self.worker.params.model_worker_trust:
             # Should have been computed when estimating the labels
-            assert self.prob_prev_annos is not None
+            self.prob_prev_annos = 0.5 #assert self.prob_prev_annos is not None
             ll += math.log(self.prob_prev_annos)
 
         return ll
