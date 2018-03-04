@@ -752,15 +752,15 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         n, d = path_to_node.shape
         class_rows = leaf_node_indices - 1
 
-        M = np.empty([num_workers, num_nodes -1, num_nodes-1], dtype=np.float32)
-        N = np.empty([num_workers, num_nodes -1], dtype=np.float32)
+        M = np.zeros([num_workers, num_nodes -1, num_nodes-1], dtype=np.float32)
+        N = np.zeros([num_workers, num_nodes -1], dtype=np.float32)
         w = 0
         for anno in self.z.itervalues():
             if not anno.is_computer_vision() or ncv:
-                wM, wN = anno.worker.build_M_and_N()
+                anno.worker.build_M_and_N(M[w], N[w])
                 #build_worker_annotation_probs(n, d, num_classes, wM, wN, prob_prior_responses[w], parents, levels, path_to_node, annotation_probs[w], class_rows)
-                M[w] = wM
-                N[w] = wN
+                #M[w] = wM
+                #N[w] = wN
                 w+=1
 
         build_all_worker_annotation_probs(num_workers, n, d, num_classes, M, N, prob_prior_responses, parents, levels, path_to_node, annotation_probs, class_rows)
@@ -1001,14 +1001,14 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
                 prob_trust_num / float(prob_trust_denom), 0.00000001, 0.9999)
             self.skill.append(self.prob_trust)
 
-    def build_M_and_N(self):
+    def build_M_and_N(self, M, N):
         # NOTE: this return M.T!
 
         # Build the M matrix.
         # The size will be [num nodes, num nodes]
         # M[y, z] is the probability of predicting class z when the true class is y.
-        num_nodes = self.params.node_priors.shape[0]
-        M = np.zeros([num_nodes - 1, num_nodes -1], dtype=np.float32)
+        #num_nodes = self.params.node_priors.shape[0]
+        #M = np.zeros([num_nodes - 1, num_nodes -1], dtype=np.float32)
 
         # Fill in the diagaonal of the block diagonals
         M[self.params.M_correct_rows, self.params.M_correct_cols] = self.skill_vector[self.params.skill_vector_correct_read_indices]
@@ -1073,10 +1073,10 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
         pnc = 1 - pc
 
         # Multiply the probability of not correct by the prior on the node
-        N = self.params.node_priors[1:] * pnc
+        N[:] = self.params.node_priors[1:] * pnc
         #N[1:] = ppnc # don't overwrite the root node.
 
-        return M, N.astype(np.float32)
+        #return M, N.astype(np.float32)
 
     def parse(self, data):
         super(CrowdWorkerMulticlassSingleBinomial, self).parse(data)
