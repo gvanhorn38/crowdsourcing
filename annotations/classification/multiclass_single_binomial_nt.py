@@ -312,17 +312,20 @@ class CrowdImageMulticlass(CrowdImage):
                 pnt = 1. - pt
                 ppnt = pnt * class_probs[wl]
 
+                # Numerator
                 # p(z_j^{t-1} | z, w_j^t) * p(H^{t-2} | z_j^{t-1}, w_j^{t-1})
                 ppr = prob_prior_responses[wind - 1][pl]
-                num = np.full(shape=num_classes, fill_value=ppnt * ppr)
-                num[pl] = pt * ppr
+                num = np.full(shape=num_classes, fill_value=ppnt * ppr) # fill in (1 - p_j)p(z_j) * p(H^{t-2} | z_j, w_j) for all values
+                num[pl] = pt * ppr # For the
 
+                # Denominator
                 # Sum( p(z | z_j^t, w_j^t) * p(H^{t-2} | z, w_j^{t-1}) )
                 match = pt * prob_prior_responses[wind - 1]
                 no_match = ppnt * prob_prior_responses[wind - 1]
                 no_match_sum = no_match.sum()
                 denom = (match + no_match_sum) - no_match
 
+                # p(H^{t-1} | z_j, w_j)
                 prob_prior_responses[wind] = num / denom
 
             # Store these computions with the labels, to be used when computing the log likelihood.

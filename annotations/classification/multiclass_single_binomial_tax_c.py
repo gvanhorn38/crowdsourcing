@@ -40,33 +40,49 @@ from ...util.taxonomy import Taxonomy
 import ctypes
 from numpy.ctypeslib import ndpointer
 lib = ctypes.cdll.LoadLibrary("/Users/GVH/Desktop/inat_tax_expr/annoprobs.so")
-build_worker_annotation_probs = lib.build_worker_annotation_probs
-build_worker_annotation_probs.restype = None
-build_worker_annotation_probs.argtypes = [
-    ctypes.c_int,
-    ctypes.c_int,
-    ndpointer(ctypes.c_float),
-    ndpointer(ctypes.c_float),
-    ndpointer(ctypes.c_int),
-    ndpointer(ctypes.c_int),
-    ndpointer(ctypes.c_int)
-]
-# build_worker_annotation_probs = lib.do_both
+# build_worker_annotation_probs = lib.build_worker_annotation_probs
 # build_worker_annotation_probs.restype = None
 # build_worker_annotation_probs.argtypes = [
 #     ctypes.c_int,
 #     ctypes.c_int,
-#     ctypes.c_int,
 #     ndpointer(ctypes.c_float),
 #     ndpointer(ctypes.c_float),
 #     ndpointer(ctypes.c_int),
 #     ndpointer(ctypes.c_int),
-#     ndpointer(ctypes.c_int),
-#     ndpointer(ctypes.c_float),
 #     ndpointer(ctypes.c_int)
 # ]
+build_worker_annotation_probs = lib.build_and_copy_rows
+build_worker_annotation_probs.restype = None
+build_worker_annotation_probs.argtypes = [
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ndpointer(ctypes.c_float),
+    ndpointer(ctypes.c_float),
+    ndpointer(ctypes.c_float),
+    ndpointer(ctypes.c_int),
+    ndpointer(ctypes.c_int),
+    ndpointer(ctypes.c_int),
+    ndpointer(ctypes.c_float),
+    ndpointer(ctypes.c_int)
+]
 
-
+build_all_worker_annotation_probs = lib.build_and_copy_rows_for_multiple_workers
+build_all_worker_annotation_probs.restype = None
+build_all_worker_annotation_probs.argtypes = [
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ndpointer(ctypes.c_float),
+    ndpointer(ctypes.c_float),
+    ndpointer(ctypes.c_float),
+    ndpointer(ctypes.c_int),
+    ndpointer(ctypes.c_int),
+    ndpointer(ctypes.c_int),
+    ndpointer(ctypes.c_float),
+    ndpointer(ctypes.c_int)
+]
 
 class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
     """ A dataset for multiclass labeling across a taxonomy.
@@ -304,6 +320,10 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
                 parent_indices.append(parent_integer_id)
         self.parent_indices = np.array(parent_indices, np.int32) - 1 # shift everthing down by 1 (accounting for the loss of the root)
         self.encode_exclude['parent_indices'] = True
+
+        # sanity check that the parent indices are increasing
+        for i in xrange(1, num_nodes-1):
+            assert parent_indices[i-1] <= parent_indices[i]
 
         # For each child node, store its level
         levels = [] # [num_nodes -1]
@@ -649,36 +669,13 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         ncv = self.params.naive_computer_vision
         num_workers = sum([1 for anno in self.z.itervalues() if not anno.is_computer_vision() or ncv])
 
-        # Collect the relevant data from each worker:
-        #M = np.empty([num_workers, num_nodes, num_nodes], dtype=np.float32)
-        #N = np.empty([num_workers, num_nodes], dtype=np.float32)
+        # Collect the relevant data from each worker to build the prob_prior_responses tensor.
         worker_labels = np.empty(num_workers, dtype=np.intp)
         worker_prob_trust = np.empty(num_workers, dtype=np.float32)
-
-        # This gives us a [num_workers, num_classes, num_nodes - 1] tensor corresponding to the probability that
-        # a worker w provided annotation z given that the true class is y.
-        annotation_probs = np.empty([num_workers, num_classes, num_nodes - 1], dtype=np.float32)
-        #annotation_probs = np.ascontiguousarray(annotation_probs)
-
-        # parameters to `build_worker_annotation_probs`
-        parents = self.params.parent_indices # [n]
-        levels = self.params.levels # [n]
-        path_to_node = self.params.path_to_node # [n, d]
-        n, d = path_to_node.shape
 
         w = 0
         for anno in self.z.itervalues():
             if not anno.is_computer_vision() or ncv:
-                wM, wN = anno.worker.build_M_and_N()
-
-                # modifies wM in place
-                #build_worker_annotation_probs(n, d, num_classes, wM, wN, parents, levels, path_to_node, annotation_probs[w], leaf_node_indices - 1)
-                #annotation_probs[w] = wM.T[leaf_node_indices - 1]
-
-                build_worker_annotation_probs(n, d, wM, wN, parents, levels, path_to_node)
-                annotation_probs[w] = wM[leaf_node_indices - 1]
-
-
                 integer_label = self.params.orig_node_key_to_integer_id[anno.label]
                 worker_labels[w] = integer_label
                 worker_prob_trust[w] = anno.worker.prob_trust
@@ -692,7 +689,7 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         # a node. Each entry [j, z] will be the probability of the previous
         # annotations given that the worker j provided label z.
         # Use 1s as the default value.
-        prob_prior_responses = np.ones((num_workers, num_nodes -1), dtype=np.float)
+        prob_prior_responses = np.ones((num_workers, num_nodes -1), dtype=np.float32)
         if num_workers > 1:
             previous_label = worker_labels[0] - 1 # to account for the loss of the root node
             worker_label = worker_labels[1] # this indexes into node_prios, so don't subtract 1
@@ -718,7 +715,7 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
                 # The numerator values will be ppnt * X, except for the location
                 # where z == previous label, which will have the value pt * X
                 ppr = prob_prior_responses[wind - 1][previous_label] # p(H^{t-2} | z_j^{t-1}, w_j^{t-1})
-                num = np.full(shape=num_nodes-1, fill_value=ppnt * ppr) # fill in (1 - p_j)p(z_j) * p(H^{t-2} | z_j, w_j) for all values
+                num = np.full(shape=num_nodes-1, fill_value=ppnt * ppr, dtype=np.float32) # fill in (1 - p_j)p(z_j) * p(H^{t-2} | z_j, w_j) for all values
                 num[previous_label] = pt * ppr # (this is where z == previous_label)
 
                 # Denominator: Sum( p(z | z_j^t, w_j^t) * p(H^{t-2} | z, w_j^{t-1}) )
@@ -744,6 +741,30 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         if avoid_if_finished and self.finished:
             return
 
+        # This gives us a [num_workers, num_classes, num_nodes - 1] tensor corresponding to the probability that
+        # a worker w provided annotation z given that the true class is y.
+        annotation_probs = np.empty([num_workers, num_classes, num_nodes - 1], dtype=np.float32)
+        #annotation_probs = np.ascontiguousarray(annotation_probs)
+        # parameters to `build_worker_annotation_probs`
+        parents = self.params.parent_indices # [n]
+        levels = self.params.levels # [n]
+        path_to_node = self.params.path_to_node # [n, d]
+        n, d = path_to_node.shape
+        class_rows = leaf_node_indices - 1
+
+        M = np.empty([num_workers, num_nodes -1, num_nodes-1], dtype=np.float32)
+        N = np.empty([num_workers, num_nodes -1], dtype=np.float32)
+        w = 0
+        for anno in self.z.itervalues():
+            if not anno.is_computer_vision() or ncv:
+                wM, wN = anno.worker.build_M_and_N()
+                #build_worker_annotation_probs(n, d, num_classes, wM, wN, prob_prior_responses[w], parents, levels, path_to_node, annotation_probs[w], class_rows)
+                M[w] = wM
+                N[w] = wN
+                w+=1
+
+        build_all_worker_annotation_probs(num_workers, n, d, num_classes, M, N, prob_prior_responses, parents, levels, path_to_node, annotation_probs, class_rows)
+
         # We'll transpose annotation_probs so that we have classes first
         annotation_probs = np.transpose(annotation_probs, axes=(1, 0, 2))
         # This gives us a [num_classes, num_workers, num_nodes -1] tensor
@@ -761,12 +782,13 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         # We'll use integer indexing, hence the use of np.arange(num_workers)
         # [num_classes, num_workers] -> [num_classes, num_workers]
         widx = np.arange(num_workers)
-        num = np.log(annotation_probs[:, widx, worker_labels]) + np.log(prob_prior_responses[widx, worker_labels])
+        num = np.log(annotation_probs[:, widx, worker_labels])
         # Denominator [num_clases, num_workers, num_nodes] -> [num_classes, num_workers]
-        denom = np.sum(annotation_probs[:] * prob_prior_responses, axis=2)
+        denom = np.sum(annotation_probs, axis=2)
         # Division
         # [num_classes, num_workers] -> [num_classes]
         prob_of_annos = np.sum(num - np.log(denom), axis=1)
+
 
         # Tack on the class priors
         class_log_likelihoods = prob_of_annos + np.log(class_priors)
@@ -791,7 +813,7 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
             print(num_classes)
             print(worker_labels)
             s = np.argsort(class_log_likelihoods)[::-1][:10]
-            labels = leaf_node_indices[s]
+            labels = leaf_node_indices[s] - 1
             keys = [self.params.integer_id_to_orig_node_key[i] for i in labels]
             print(s)
             print(labels)
@@ -801,7 +823,7 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
             print(np.log(class_priors)[s])
             print(prob_of_annos[s])
             #print(annotation_probs[:, widx, worker_labels])
-            print(annotation_probs[33, widx, worker_labels])
+            #print(annotation_probs[33, widx, worker_labels])
             print(prob_prior_responses[widx, worker_labels])
             print(arg_max_index)
             print(pred_y_integer_id)
@@ -811,7 +833,7 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
             for w, anno in enumerate(self.z.itervalues()):
                  print(anno.worker.id)
                  print(anno.worker.skill)
-                 #print(M[w, 60, 60])
+                 print(anno.worker.skill_vector)
 
 
     def compute_log_likelihood(self):
@@ -913,9 +935,6 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
 
             y_node_list = self.params.root_to_node_path_list[y_integer_id]
             z_node_list = self.params.root_to_node_path_list[z_integer_id]
-
-
-
 
             # Traverse the paths and update the counts.
             # Note that we update the parent count when the children match
@@ -1057,7 +1076,7 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
         N = self.params.node_priors[1:] * pnc
         #N[1:] = ppnc # don't overwrite the root node.
 
-        return M, N
+        return M, N.astype(np.float32)
 
     def parse(self, data):
         super(CrowdWorkerMulticlassSingleBinomial, self).parse(data)
@@ -1088,6 +1107,7 @@ class CrowdLabelMulticlassSingleBinomial(CrowdLabel):
         self.label = label
         self.gtype = 'multiclass_single_bin'
         self.prob_prev_annos = None
+        self.encode_exclude['prob_prev_annos'] = True
 
     def compute_log_likelihood(self):
         """ The likelihood of the label.
@@ -1130,7 +1150,7 @@ class CrowdLabelMulticlassSingleBinomial(CrowdLabel):
 
         if self.worker.params.model_worker_trust:
             # Should have been computed when estimating the labels
-            self.prob_prev_annos = 0.5 #assert self.prob_prev_annos is not None
+            assert self.prob_prev_annos is not None #self.prob_prev_annos = 0.5
             ll += math.log(self.prob_prev_annos)
 
         return ll
