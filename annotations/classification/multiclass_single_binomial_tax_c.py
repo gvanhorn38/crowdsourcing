@@ -668,7 +668,7 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         self.y = CrowdLabelMulticlassSingleBinomial(
             image=self, worker=None, label=pred_y)
 
-    @profile
+    #@profile
     def predict_true_labels(self, avoid_if_finished=False):
         """ Compute the y that is most likely given the annotations, worker
         skills, etc.
