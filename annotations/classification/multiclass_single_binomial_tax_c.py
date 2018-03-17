@@ -287,6 +287,9 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
             skill_vector_N_indices[integer_id-1] = parent_skill_vector_index
         self.skill_vector_N_indices = skill_vector_N_indices
         self.encode_exclude['skill_vector_N_indices'] = True
+
+        print(skill_vector_N_indices)
+
         #
         #########################
 
@@ -446,6 +449,12 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
         M_indices = M_incorrect_indices + M_correct_indices
         M_indices.sort()
         assert M_indices == range(scs)
+
+        print(skill_vector_correct_read_indices)
+        print(skill_vector_incorrect_read_indices)
+        print(M_correct_indices)
+        print(M_incorrect_indices)
+
 
         self.skill_vector_correct_read_indices = np.array(skill_vector_correct_read_indices, np.intp)
         self.M_correct_indices = np.array(M_correct_indices, np.intp)
@@ -773,6 +782,11 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         for anno in self.z.itervalues():
             if not anno.is_computer_vision() or ncv:
                 anno.worker.build_M_and_N(M[w], N[w])
+
+                #print(M[w])
+                #print(N[w])
+                #print()
+
                 w += 1
 
 
