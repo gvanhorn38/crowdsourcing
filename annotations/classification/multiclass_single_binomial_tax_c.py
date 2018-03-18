@@ -23,7 +23,7 @@ SOFTWARE.
 """
 # pylint: disable=line-too-long
 
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, division#, print_function
 
 from collections import Counter
 import math
@@ -288,7 +288,7 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
         self.skill_vector_N_indices = skill_vector_N_indices
         self.encode_exclude['skill_vector_N_indices'] = True
 
-        print(skill_vector_N_indices)
+        #print(skill_vector_N_indices)
 
         #
         #########################
@@ -450,10 +450,10 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
         M_indices.sort()
         assert M_indices == range(scs)
 
-        print(skill_vector_correct_read_indices)
-        print(skill_vector_incorrect_read_indices)
-        print(M_correct_indices)
-        print(M_incorrect_indices)
+        #print(skill_vector_correct_read_indices)
+        #print(skill_vector_incorrect_read_indices)
+        #print(M_correct_indices)
+        #print(M_incorrect_indices)
 
 
         self.skill_vector_correct_read_indices = np.array(skill_vector_correct_read_indices, np.intp)
@@ -833,7 +833,7 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         # print("leaf nodes offset continuous: %d" % leaf_nodes.flags.contiguous)
         # print("parents_offset continuous: %d" % parent_offset_when_excluding_leaves.flags.contiguous)
         # print("Z continuous: %d" % worker_labels.flags.contiguous)
-
+        #print self.id
         get_class_lls(
             w, n, l, scs,
             M, N, prob_prior_responses,
@@ -862,32 +862,50 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         self.risk = 1. - prob_y
 
         if self.id == '1112246':
-            print(num_nodes)
-            print(num_classes)
-            print(worker_labels)
-            s = np.argsort(class_log_likelihoods)[::-1][:10]
-            labels = leaf_node_indices[s] - 1
-            keys = [self.params.integer_id_to_orig_node_key[i] for i in labels]
-            print(s)
-            print(labels)
-            print(keys)
-            print(lls[s])
-            print(class_log_likelihoods[s])
-            #print(class_log_likelihoods)
-            print(np.log(class_priors)[s])
-            #print(prob_of_annos[s])
-            #print(annotation_probs[:, widx, worker_labels])
-            #print(annotation_probs[33, widx, worker_labels])
-            #print(prob_prior_responses[widx, worker_labels])
-            print(arg_max_index)
-            print(pred_y_integer_id)
-            print(pred_y)
-            print(prob_y)
+            y_labels = np.argsort(class_log_likelihoods)[::-1]
+            print "Most likely classes:"
+            print y_labels
+            print "Log likelihoods:"
+            print class_log_likelihoods[y_labels]
+            print "Log Class priors"
+            print np.log(class_priors)[y_labels]
+            print "Log Anno Probs"
+            print lls[y_labels]
+            print "Prob y"
+            print prob_y
 
-            for w, anno in enumerate(self.z.itervalues()):
-                 print(anno.worker.id)
-                 print(anno.worker.skill)
-                 print(anno.worker.skill_vector)
+            print "Worker info:"
+            print num_workers
+            print worker_labels
+            print M
+            print worker_prob_trust
+
+            # print(num_nodes)
+            # print(num_classes)
+            # print(worker_labels)
+            # s = np.argsort(class_log_likelihoods)[::-1][:10]
+            # labels = leaf_node_indices[s] - 1
+            # keys = [self.params.integer_id_to_orig_node_key[i] for i in labels]
+            # print(s)
+            # print(labels)
+            # print(keys)
+            # print(lls[s])
+            # print(class_log_likelihoods[s])
+            # #print(class_log_likelihoods)
+            # print(np.log(class_priors)[s])
+            # #print(prob_of_annos[s])
+            # #print(annotation_probs[:, widx, worker_labels])
+            # #print(annotation_probs[33, widx, worker_labels])
+            # #print(prob_prior_responses[widx, worker_labels])
+            # print(arg_max_index)
+            # print(pred_y_integer_id)
+            # print(pred_y)
+            # print(prob_y)
+
+            # for w, anno in enumerate(self.z.itervalues()):
+            #      print(anno.worker.id)
+            #      print(anno.worker.skill)
+            #      print(anno.worker.skill_vector)
 
 
     def compute_log_likelihood(self):

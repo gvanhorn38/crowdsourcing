@@ -352,13 +352,24 @@ class CrowdImageMulticlass(CrowdImage):
                 num = np.full(shape=num_classes, fill_value=ppnc * ppr)
                 num[wl] = pc * ppr
 
+                # if self.id == '1112246':
+                #     for c in range(num_classes):
+                #         print "class %d, worker %d, prob anno = %0.3f, prob pre anno = %0.3f, prob = %0.3f" % (c, wind, pc, ppr, num[c])
+
+                # Create the denominator
                 diag = pc * prob_prior_responses[wind]
-                off_diag = ppnc * prob_prior_responses[wind]
+                #off_diag = ppnc * prob_prior_responses[wind]
+                off_diag = pnc * class_probs * prob_prior_responses[wind] # GVH: The previous line is incorrect.
                 off_diag_sum = off_diag.sum()
                 denom = (diag + off_diag_sum) - off_diag
 
                 probs[wind] = num / denom
 
+                if self.id == '1112246':
+                    for c in range(num_classes):
+                        #print "class %d, worker %d, num = %0.3f, denom = %0.3f, prob = %0.3f" % (c, wind, num[c], denom[c], probs[wind][c])
+                        print "p(z = %d | y = %d, H, w = %d) = %0.3f / %0.3f = %0.3f" % (wl, c, wind, num[c], denom[c], probs[wind][c])
+            #print
             # Compute log(p(y)) + Sum( log(p(z_j | y, H, w)) )
             lprobs = np.log(probs).sum(axis = 0)
             lls = log_class_probs + lprobs
@@ -396,29 +407,6 @@ class CrowdImageMulticlass(CrowdImage):
         y_labels = np.argsort(lls)[::-1]
         lls = lls[y_labels]
 
-        # if self.id == '4515275':
-        #     print y_labels[:10]
-        #     print lls[:10]
-
-        #     print log_class_probs[y_labels][:2]
-        #     print lprobs[y_labels][:2]
-
-        #     print
-        #     print np.log(probs).sum(axis=0)[y_labels][:2]
-        #     print np.log(prob_prior_responses).sum(axis=0)[y_labels][:2]
-        #     print
-
-        #     print
-        #     print np.log(probs)[:,y_labels][:,:2]
-        #     print np.log(prob_prior_responses)[:,y_labels][:,:2]
-        #     print
-
-        #     print num_workers
-        #     print worker_labels
-        #     print worker_prob_correct
-        #     print worker_prob_trust
-
-
         pred_y = y_labels[0]
         self.y = CrowdLabelMulticlass(image=self, worker=None, label=pred_y)
 
@@ -427,6 +415,35 @@ class CrowdImageMulticlass(CrowdImage):
         denom = np.sum(np.exp(lls - m))
         prob_y = num / denom
         self.risk = 1. - prob_y
+
+        if self.id == '1112246':
+            print "Most likely classes:"
+            print y_labels
+            print "Log likelihoods:"
+            print lls
+            print "Log Class priors"
+            print log_class_probs[y_labels]
+            print "Log Anno Probs"
+            print lprobs[y_labels]
+            print "Prob y"
+            print prob_y
+            print "Worker Anno Probs"
+            print probs
+
+            #print
+            #print np.log(probs).sum(axis=0)[y_labels][:2]
+            #print np.log(prob_prior_responses).sum(axis=0)[y_labels][:2]
+            #print
+
+            #print
+            #print np.log(probs)[:,y_labels][:,:2]
+            #print np.log(prob_prior_responses)[:,y_labels][:,:2]
+            #print
+            print "Worker info:"
+            print num_workers
+            print worker_labels
+            print worker_prob_correct
+            print worker_prob_trust
 
     def compute_log_likelihood(self):
         """Compute the log likelihood of the predicted label given the prior that the class is present.
