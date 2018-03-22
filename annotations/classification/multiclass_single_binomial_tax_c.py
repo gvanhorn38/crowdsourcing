@@ -847,12 +847,12 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         # actually want to compute the log likelihood of the annotations below.
         # In which case we will return after doing that.
         if avoid_if_finished and self.finished and not self.params.model_worker_trust:
-            return
+            return None
 
         class_log_likelihoods = self._compute_class_log_likelihoods(avoid_if_finished)
 
         if avoid_if_finished and self.finished:
-            return
+            return class_log_likelihoods
 
         # Get the most likely prediction
         arg_max_index = np.argmax(class_log_likelihoods)
@@ -891,13 +891,15 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
             print M
             print worker_prob_trust
 
-    def compute_probability_of_each_leaf_node(self):
+        return class_log_likelihoods
+
+    def compute_probability_of_each_leaf_node(self, class_log_likelihoods=None):
         """ Compute the probability of each leaf node being the correct label.
         Returns:
             numpy.ndarray of size [num_leaf_nodes] that represents the probability of each leaf node being the correct label.
         """
-
-        class_log_likelihoods = self._compute_class_log_likelihoods()
+        if class_log_likelihoods is None:
+            class_log_likelihoods = self._compute_class_log_likelihoods()
 
         # transform back to probabilities:
         class_exp = np.exp(class_log_likelihoods)
@@ -905,12 +907,12 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
 
         return class_probabilities
 
-    def compute_probability_of_each_node(self):
+    def compute_probability_of_each_node(self, class_log_likelihoods=None):
         """ Compute the probability of the leaf nodes, and then roll the probabilities up the taxonomy.
         Returns:
             numpy.ndarray of size [num_nodes] that represents the probability of each node occuring.
         """
-        leaf_node_probabilities = self.compute_probability_of_each_leaf_node()
+        leaf_node_probabilities = self.compute_probability_of_each_leaf_node(class_log_likelihoods)
 
         node_probs = np.zeros(self.params.node_priors.shape[0], dtype=np.float32)
 
