@@ -1,7 +1,7 @@
 """
 MIT License
 
-Copyright (c) 2017 Grant Van Horn
+Copyright (c) 2018 Grant Van Horn
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -677,34 +677,12 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         self.y = CrowdLabelMulticlassSingleBinomial(
             image=self, worker=None, label=pred_y)
 
-    #@profile
-    def predict_true_labels(self, avoid_if_finished=False):
-        """ Compute the y that is most likely given the annotations, worker
-        skills, etc.
-        """
+    def _get_worker_labels_and_trust(self):
+        # Collect the relevant data from each worker to build the prob_prior_responses tensor.
 
-        # NOTE: This is tricky. If we are estimating worker trust, then we
-        # actually want to compute the log likelihood of the annotations below.
-        # In which case we will return after doing that.
-        if avoid_if_finished and self.finished and not self.params.model_worker_trust:
-            return
-
-        node_priors = self.params.node_priors
-        leaf_node_indices = self.params.leaf_integer_ids
-        class_priors = node_priors[leaf_node_indices]
-
-        num_nodes = node_priors.shape[0]
-        num_classes = leaf_node_indices.shape[0]
-
-        node_labels = np.arange(num_nodes - 1)
-
-        max_path_length = self.params.taxonomy.max_depth + 1
-
-        # Get the number of workers that have labeled this image
         ncv = self.params.naive_computer_vision
         num_workers = sum([1 for anno in self.z.itervalues() if not anno.is_computer_vision() or ncv])
 
-        # Collect the relevant data from each worker to build the prob_prior_responses tensor.
         worker_labels = np.empty(num_workers, dtype=np.int32)
         worker_prob_trust = np.empty(num_workers, dtype=np.float32)
 
@@ -716,6 +694,19 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
                 worker_prob_trust[w] = anno.worker.prob_trust
                 w += 1
 
+        return worker_labels, worker_prob_trust
+
+    def _make_probability_of_prior_responses(self, worker_labels, worker_prob_trust, node_priors):
+        """ Build a tensor that stores the probability of prior annotations given that a worker said "z".
+        Args:
+            worker_labels (numpy.ndarray int32): The worker annotations, should be in the range [0, num_nodes)
+            worker_prob_trust (numpy.ndarray float32): The probability of a worker trusting previous annotations.
+            node_priors (numpy.ndarray float32): The probability of each node occuring (this should include the root node).
+        """
+
+        num_nodes = node_priors.shape[0]
+        node_labels = np.arange(num_nodes - 1)
+        num_workers = worker_labels.shape[0]
 
         # Build a tensor that stores the probability of prior annotations given that a worker
         # said "z"
@@ -765,16 +756,11 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
                 # p(H^{t-1} | z_j, w_j)
                 prob_prior_responses[wind] = num / denom
 
-        # Store these computions with the labels, to be used when computing the log likelihood.
-        wind = 0
-        for anno in self.z.values():
-            if not anno.is_computer_vision() or ncv:
-                wl = worker_labels[wind] -1 # to account for the loss of the root node
-                anno.prob_prev_annos = prob_prior_responses[wind, wl]
-                wind += 1
-        # NOTE: see above (we needed to compute the likelihood of the annotations)
-        if avoid_if_finished and self.finished:
-            return
+        return prob_prior_responses
+
+    def _make_M_and_N_matrices(self, num_workers, num_nodes):
+
+        ncv = self.params.naive_computer_vision
 
         M = np.empty([num_workers, self.params.scs], dtype=np.float32)
         N = np.empty([num_workers, num_nodes -1], dtype=np.float32)
@@ -782,13 +768,45 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         for anno in self.z.itervalues():
             if not anno.is_computer_vision() or ncv:
                 anno.worker.build_M_and_N(M[w], N[w])
-
-                #print(M[w])
-                #print(N[w])
-                #print()
-
                 w += 1
+        return M, N
 
+    def _compute_class_log_likelihoods(self, avoid_if_finished=False):
+
+        node_priors = self.params.node_priors
+        leaf_node_indices = self.params.leaf_integer_ids
+        class_priors = node_priors[leaf_node_indices]
+
+        num_nodes = node_priors.shape[0]
+        num_classes = leaf_node_indices.shape[0]
+
+        # Collect the relevant data from each worker to build the prob_prior_responses tensor.
+        worker_labels, worker_prob_trust = self._get_worker_labels_and_trust()
+        num_workers = worker_labels.shape[0]
+        ncv = self.params.naive_computer_vision
+
+        # Build a tensor that stores the probability of prior annotations given that a worker
+        # said "z"
+        # p(H^{t-1} | z_j, w_j)
+        # Each worker j will represent a row. Each column z will represent
+        # a node. Each entry [j, z] will be the probability of the previous
+        # annotations given that the worker j provided label z.
+        prob_prior_responses = self._make_probability_of_prior_responses(worker_labels, worker_prob_trust, node_priors)
+
+        # Store these computions with the labels, to be used when computing the log likelihood.
+        wind = 0
+        for anno in self.z.values():
+            if not anno.is_computer_vision() or ncv:
+                wl = worker_labels[wind] -1 # to account for the loss of the root node
+                anno.prob_prev_annos = prob_prior_responses[wind, wl]
+                wind += 1
+        # NOTE: This is tricky. If we are estimating worker trust, then we
+        # actually want to compute the log likelihood of the annotations.
+        # In which case we will return after doing that.
+        if avoid_if_finished and self.finished:
+            return
+
+        M, N = self._make_M_and_N_matrices(num_workers, num_nodes)
 
         w = num_workers
         n = num_nodes - 1
@@ -803,37 +821,9 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         parent_offset_when_excluding_leaves = self.params.parent_offset_when_excluding_leaves
         worker_labels = worker_labels - 1
 
-
-
         lls = np.zeros(num_classes, dtype=np.float32)
 
-        #w = 1
-        #M = np.expand_dims(M[-1], 0)
-        #N = np.expand_dims(N[-1], 0)
-        #prob_prior_responses = np.expand_dims(prob_prior_responses[-1], 0)
-
-        #M = np.ones([w, 1885], dtype=np.float32)
-        #N = np.ones([w, 187], dtype=np.float32)
-
-        # print("M shape: %s" % str(M.shape))
-        # print("N shape: %s" % str(N.shape))
-        # print("P shape: %s" % str(prob_prior_responses.shape))
-        # print("M has nan: %d" % np.any(np.isnan(M)))
-        # print("N has nan: %d" % np.any(np.isnan(N)))
-        # print("P has nan: %d" % np.any(np.isnan(prob_prior_responses)))
-        #print(N[0,-10:])
-        # print(worker_labels)
-        # print("M continuous: %d" % M.flags.contiguous)
-        # print("N continuous: %d" % N.flags.contiguous)
-        # print("P continuous: %d" % prob_prior_responses.flags.contiguous)
-        # print("M offset continuous: %d" % M_offset_indices.flags.contiguous)
-        # print("num siblings offset continuous: %d" % num_siblings.flags.contiguous)
-        # print("parents continuous: %d" % parents.flags.contiguous)
-        # print("inner nodes continuous: %d" % inner_nodes.flags.contiguous)
-        # print("leaf nodes offset continuous: %d" % leaf_nodes.flags.contiguous)
-        # print("parents_offset continuous: %d" % parent_offset_when_excluding_leaves.flags.contiguous)
-        # print("Z continuous: %d" % worker_labels.flags.contiguous)
-        #print self.id
+        # Get the log likelihood of each class
         get_class_lls(
             w, n, l, scs,
             M, N, prob_prior_responses,
@@ -846,9 +836,27 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         # Tack on the class priors
         class_log_likelihoods = lls + np.log(class_priors)
 
+        return class_log_likelihoods
+
+    def predict_true_labels(self, avoid_if_finished=False):
+        """ Compute the y that is most likely given the annotations, worker
+        skills, etc.
+        """
+
+        # NOTE: This is tricky. If we are estimating worker trust, then we
+        # actually want to compute the log likelihood of the annotations below.
+        # In which case we will return after doing that.
+        if avoid_if_finished and self.finished and not self.params.model_worker_trust:
+            return
+
+        class_log_likelihoods = self._compute_class_log_likelihoods(avoid_if_finished)
+
+        if avoid_if_finished and self.finished:
+            return
+
         # Get the most likely prediction
         arg_max_index = np.argmax(class_log_likelihoods)
-        pred_y_integer_id = leaf_node_indices[arg_max_index]
+        pred_y_integer_id = self.params.leaf_integer_ids[arg_max_index]
 
         pred_y = self.params.integer_id_to_orig_node_key[pred_y_integer_id]
         self.y = CrowdLabelMulticlassSingleBinomial(image=self, worker=None, label=pred_y)
@@ -883,32 +891,37 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
             print M
             print worker_prob_trust
 
-            # print(num_nodes)
-            # print(num_classes)
-            # print(worker_labels)
-            # s = np.argsort(class_log_likelihoods)[::-1][:10]
-            # labels = leaf_node_indices[s] - 1
-            # keys = [self.params.integer_id_to_orig_node_key[i] for i in labels]
-            # print(s)
-            # print(labels)
-            # print(keys)
-            # print(lls[s])
-            # print(class_log_likelihoods[s])
-            # #print(class_log_likelihoods)
-            # print(np.log(class_priors)[s])
-            # #print(prob_of_annos[s])
-            # #print(annotation_probs[:, widx, worker_labels])
-            # #print(annotation_probs[33, widx, worker_labels])
-            # #print(prob_prior_responses[widx, worker_labels])
-            # print(arg_max_index)
-            # print(pred_y_integer_id)
-            # print(pred_y)
-            # print(prob_y)
+    def compute_probability_of_each_leaf_node(self):
+        """ Compute the probability of each leaf node being the correct label.
+        Returns:
+            numpy.ndarray of size [num_leaf_nodes] that represents the probability of each leaf node being the correct label.
+        """
 
-            # for w, anno in enumerate(self.z.itervalues()):
-            #      print(anno.worker.id)
-            #      print(anno.worker.skill)
-            #      print(anno.worker.skill_vector)
+        class_log_likelihoods = self._compute_class_log_likelihoods()
+
+        # transform back to probabilities:
+        class_exp = np.exp(class_log_likelihoods)
+        class_probabilities = class_exp / class_exp.sum()
+
+        return class_probabilities
+
+    def compute_probability_of_each_node(self):
+        """ Compute the probability of the leaf nodes, and then roll the probabilities up the taxonomy.
+        Returns:
+            numpy.ndarray of size [num_nodes] that represents the probability of each node occuring.
+        """
+        leaf_node_probabilities = self.compute_probability_of_each_leaf_node()
+
+        node_probs = np.zeros(self.params.node_priors.shape[0], dtype=np.float32)
+
+        for zero_indexed_leaf_integer_id in xrange(leaf_node_probabilities.shape[0]):
+            # Map the 0-indexed leaf id to its node integer id
+            y = self.params.leaf_integer_ids[zero_indexed_leaf_integer_id]
+            path_to_y = self.params.root_to_node_path_list[y]
+            # Add the probability to all nodes on the path to y
+            node_probs[path_to_y] += leaf_node_probabilities[zero_indexed_leaf_integer_id]
+
+        return node_probs
 
 
     def compute_log_likelihood(self):
