@@ -901,7 +901,7 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
 
         # transform back to probabilities:
         class_exp = np.exp(class_log_likelihoods)
-        class_probabilities = class_exp / np.max(0.00000001, class_exp.sum())
+        class_probabilities = class_exp / np.maximum(0.00000001, class_exp.sum())
 
         return class_probabilities
 
