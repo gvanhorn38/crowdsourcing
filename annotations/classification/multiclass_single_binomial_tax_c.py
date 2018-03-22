@@ -861,22 +861,25 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         prob_y = num / denom
         self.risk = 1. - prob_y
 
-        if self.id == '1112246':
-            y_labels = np.argsort(class_log_likelihoods)[::-1]
+        if self.id == "X":#'4267920':#'8754692':#'1112246':
+            sort_idxs = np.argsort(class_log_likelihoods)[::-1]
+            y_labels = leaf_node_indices[sort_idxs]
+            print "Predicted Label:"
+            print pred_y_integer_id
             print "Most likely classes:"
             print y_labels
             print "Log likelihoods:"
-            print class_log_likelihoods[y_labels]
+            print class_log_likelihoods[sort_idxs]
             print "Log Class priors"
-            print np.log(class_priors)[y_labels]
+            print np.log(class_priors)[sort_idxs]
             print "Log Anno Probs"
-            print lls[y_labels]
+            print lls[sort_idxs]
             print "Prob y"
             print prob_y
 
             print "Worker info:"
             print num_workers
-            print worker_labels
+            print worker_labels + 1
             print M
             print worker_prob_trust
 
