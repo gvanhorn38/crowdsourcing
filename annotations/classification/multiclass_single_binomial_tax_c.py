@@ -57,6 +57,7 @@ get_class_lls.argtypes = [
     ndpointer(ctypes.c_int),
     ndpointer(ctypes.c_int),
     ndpointer(ctypes.c_int),
+    ndpointer(ctypes.c_int),
     ndpointer(ctypes.c_float)
 ]
 
@@ -353,6 +354,8 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
         # We also want to store how many entries are in that row (i.e. how many siblings the node has)
         num_siblings = [] # [num_nodes - 1]
 
+        block_starts = []
+
         # We will be building a A = [num_inner_nodes - 1, num_nodes -1] matrix for each worker.
         # For each node we want to the row of its parent in A.
         # We will store -1 for those nodes whose parent is the root node
@@ -361,6 +364,7 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
 
         current_M_index = 0 # The negative 1 is taken into acount here.
         current_A_index = 0 # The negative 1 is taken into acount here.
+        current_block_index = 0
         for integer_id in xrange(1, num_nodes):
             k = integer_id_to_orig_node_key[integer_id]
             node = self.taxonomy.nodes[k]
@@ -369,6 +373,12 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
             current_M_index += len(node.parent.children)
 
             num_siblings.append(len(node.parent.children))
+
+            block_starts.append(current_block_index)
+            if integer_id < (num_nodes - 1):
+                if parent_indices[integer_id - 1] != parent_indices[integer_id]:
+                    current_block_index += len(node.parent.children)
+
 
             parent_integer_id = orig_node_key_to_integer_id[node.parent.key]
             parent_index_in_A = node_integer_id_to_A_index[parent_integer_id]
@@ -380,9 +390,11 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
         self.M_offset_indices = np.array(M_offset_indices, dtype=np.int32)
         self.num_siblings = np.array(num_siblings, dtype=np.int32)
         self.parent_offset_when_excluding_leaves = np.array(parent_offset_when_excluding_leaves, dtype=np.int32)
+        self.block_starts = np.array(block_starts, dtype=np.int32)
         self.encode_exclude['M_offset_indices'] = True
         self.encode_exclude['num_siblings'] = True
         self.encode_exclude['parent_offset_when_excluding_leaves'] = True
+        self.encode_exclude['block_starts'] = True
 
         assert max(parent_offset_when_excluding_leaves) == len(inner_node_integer_ids) - 1
 
@@ -819,6 +831,7 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         inner_nodes = self.params.inner_node_integer_ids - 1 # shift things down to account for the root.
         leaf_nodes = leaf_node_indices - 1
         parent_offset_when_excluding_leaves = self.params.parent_offset_when_excluding_leaves
+        block_starts = self.params.block_starts
         worker_labels = worker_labels - 1
 
         lls = np.zeros(num_classes, dtype=np.float32)
@@ -828,13 +841,38 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
             w, n, l, scs,
             M, N, prob_prior_responses,
             M_offset_indices, num_siblings,
-            parents, inner_nodes, leaf_nodes, parent_offset_when_excluding_leaves,
+            parents, inner_nodes, leaf_nodes, parent_offset_when_excluding_leaves, block_starts,
             worker_labels,
             lls
         )
 
+        # if self.id == "1442526":
+        #     print np.argmax(lls)
+        #     print self.params.leaf_integer_ids[np.argmax(lls)]
+        #     print lls[np.argmax(lls)]
+        #     print np.log(class_priors)[np.argmax(lls)]
+        #     print parents[438]
+        #     print parents[2088]
+        #     print num_siblings[438]
+        #     print num_siblings[2088]
+        #     print parent_offset_when_excluding_leaves[438]
+        #     print parent_offset_when_excluding_leaves[2088]
+        #     print self.params.root_to_node_path_list[439]
+        #     print self.params.root_to_node_path_list[2089]
+        #     print prob_prior_responses[:,438]
+        #     print prob_prior_responses[:,2088]
+
         # Tack on the class priors
         class_log_likelihoods = lls + np.log(class_priors)
+
+        # if self.id == "1442526":
+        #     print np.argmax(class_log_likelihoods)
+        #     print self.params.leaf_integer_ids[np.argmax(class_log_likelihoods)]
+        #     print lls[np.argmax(class_log_likelihoods)]
+        #     print np.log(class_priors)[np.argmax(class_log_likelihoods)]
+            # l = worker_labels[0] - 1
+            # for wid in range(num_workers):
+            #     print M[wid][M_offset_indices[l]:M_offset_indices[l] + num_siblings[l]]
 
         return class_log_likelihoods
 
@@ -869,9 +907,9 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         prob_y = num / denom
         self.risk = 1. - prob_y
 
-        if self.id == "X":#'4267920':#'8754692':#'1112246':
+        if self.id == "1442526":# '4267920':#'8754692':# '1112246': #
             sort_idxs = np.argsort(class_log_likelihoods)[::-1]
-            y_labels = leaf_node_indices[sort_idxs]
+            y_labels = self.params.leaf_integer_ids[sort_idxs]
             print "Predicted Label:"
             print pred_y_integer_id
             print "Most likely classes:"
@@ -879,17 +917,33 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
             print "Log likelihoods:"
             print class_log_likelihoods[sort_idxs]
             print "Log Class priors"
+            class_priors = self.params.node_priors[self.params.leaf_integer_ids]
             print np.log(class_priors)[sort_idxs]
-            print "Log Anno Probs"
-            print lls[sort_idxs]
+            #print "Log Anno Probs"
+            #print lls[sort_idxs]
             print "Prob y"
             print prob_y
 
             print "Worker info:"
-            print num_workers
-            print worker_labels + 1
-            print M
+            print len(self.workers)
+            worker_labels, worker_prob_trust = self._get_worker_labels_and_trust()
+            print worker_labels
+            #print M
             print worker_prob_trust
+            # are the worker labels at leaf nodes or not?
+            is_leaf_anno = []
+            tax = self.params.taxonomy
+            for worker_label in worker_labels:
+                if tax.nodes[self.params.integer_id_to_orig_node_key[worker_label]].is_leaf:
+                    is_leaf_anno.append(1)
+                else:
+                    is_leaf_anno.append(0)
+            print is_leaf_anno
+            print tax.nodes[self.params.integer_id_to_orig_node_key[worker_label]].level # print the level
+
+            print np.log(class_priors)[worker_labels[0]]
+
+            print worker_labels[0] in self.params.leaf_integer_ids
 
         return class_log_likelihoods
 
