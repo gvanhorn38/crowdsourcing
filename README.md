@@ -92,7 +92,7 @@ bbox : {
 
 # Merging Bounding Boxes Example
 
-This example demonstrates how to merge redundant bounding boxes to produce a dataset that can be used to train a detector (among other things). This is a "static" usage of this code base, in the sense that all of your annotations are collected, and you are looking to merge the redundant boxes to produce a "finished" dataset. This example makes use of the Annotation Tools](https://github.com/visipedia/annotation_tools) repo for visualizing the dataset.
+This example demonstrates how to merge redundant bounding boxes to produce a dataset that can be used to train a detector (among other things). This is a "static" usage of this code base, in the sense that all of your annotations are collected, and you are looking to merge the redundant boxes to produce a "finished" dataset. This example makes use of the [Annotation Tools](https://github.com/visipedia/annotation_tools) repo for visualizing the dataset.
 
 ## Dataset Format
 
