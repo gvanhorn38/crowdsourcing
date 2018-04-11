@@ -142,7 +142,7 @@ I will assume that you have constructed the dataset and saved it. I'll assume th
 
 ## Visualize the Raw Dataset
 
-It is recommended to visualize the raw worker annotations to ensure that you constructed the dataset format correctly. We will convert the data into a COCO representation and visualize the annotations using the [Annotation Tools](https://github.com/visipedia/annotation_tools) repo. Note that you need to have a `url` field for each image in order to visualize the dataset.
+It is recommended to visualize the raw worker annotations to ensure that you constructed the dataset format correctly. We will convert the raw dataset into a COCO representation and visualize the annotations using the [Annotation Tools](https://github.com/visipedia/annotation_tools) repo. Note that you need to have a `url` field for each image in order to visualize the dataset.
 
 The following python code will convert your dataset to the COCO format and save it to the path stored in the `RAW_COCO_DATASET` variable:
 
@@ -226,7 +226,7 @@ Make sure to start the webserver:
 python run.py --port 8008
 ```
 
-Then you can go to `http://localhost:8008/edit_task/?start=0&end=100` to inspect the annotations on the first 100 images. Note that this interface does not render different worker's annotations separately, it simply renders them all together, so you should see redundant boxes on each object. We'll use the `CrowdDatasetBBox` class to merge the redundant annotations together.
+Then you can go to `http://localhost:8008/edit_task/?start=0&end=100` to inspect the annotations on the first 100 images (sorted by image ids). Note that this interface does not render different worker's annotations separately, it simply renders them all together, so you should see redundant boxes on each object. We'll use the `CrowdDatasetBBox` class to merge the redundant annotations together.
 
 ## Merging the Annotations to Produce a Combined Dataset
 
@@ -344,6 +344,19 @@ with open(COMBINED_COCO_DATASET, "w") as f:
     json.dump(coco_dataset, f)
 ```
 
+The `CrowdDatasetBBox` also computed the risk for each image and this value was saved in the combined dataset. We can sort the images by risk and visualize the riskiest images. 
+```python
+image_ids_and_risk = [(image['id'], image['risk']) for image in combined_dataset['images'].values()]
+image_ids_and_risk.sort(key=lambda x: x[1])
+image_ids_and_risk.reverse()
+
+risky_image_ids = ",".join([x[0] for x in image_ids_and_risk[:100]])
+print "Risky Image Visualization URL:"
+print "http://localhost:8008/edit_task/?image_ids=%s" % (risky_image_ids,)
+
+```
+
+
 In the `annotation_tools/` repo, we can then load up the coco dataset to visualize the combined annotations:
 
 ```
@@ -363,4 +376,11 @@ Make sure to start the webserver:
 python run.py --port 8008
 ```
 
-Then you can go to `http://localhost:8008/edit_task/?start=0&end=100` to inspect the annotations on the first 100 images. You should hopefully see one box on each object. 
+Then you can go to `http://localhost:8008/edit_task/?start=0&end=100` to inspect the annotations on the first 100 images (sorted by image ids). You should hopefully see one box on each object. You can also visit the url that was printed above to visualize the 100 riskiest images. These images might need to be edited. If you make adjustments to the annotations, then you can export the dataset with:
+```
+$ python -m annotation_tools.db_dataset_utils \
+--action export \
+--output $UPDATED_COMBINED_COCO_DATASET \
+--denormalize
+```
+The final version of your dataset will be saved at the path stored in `UPDATED_COMBINED_COCO_DATASET`.
