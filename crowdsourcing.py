@@ -302,8 +302,8 @@ class CrowdDataset(object):
             self.get_computer_vision_probabilities()
 
         # Update our estimate of the dataset wide priors
-        if self.estimate_priors_automatically:
-            self.estimate_priors()
+        #if self.estimate_priors_automatically:
+        #    self.estimate_priors()
 
         # Initialize the parameters of the workers and images
         self.initialize_parameters(avoid_if_finished=avoid_if_finished)
@@ -312,6 +312,10 @@ class CrowdDataset(object):
         log_likelihood = -np.inf
         old_likelihood = -np.inf
         for it in xrange(max_iters):
+
+            # Update our estimate of the dataset wide priors
+            if self.estimate_priors_automatically:
+                self.estimate_priors()
 
             if self.debug > 1:
                 print("Estimate params for " + self.name + ", iter " +

@@ -492,35 +492,31 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
         priors.
         """
 
-        assert False, "Not implemented"
-
-        # Initialize the `prob_correct_prior` for each node to
-        # `self.prob_correct_prior`
+        # Initialize the `prob_correct_prior`, `prob_correct` and `prob` for each node
         if not self.taxonomy.priors_initialized:
             print("INITIALIZING all node priors to defaults")
             self.initialize_default_priors()
-            self.taxonomy.priors_initialized = True
 
         # Pooled counts
-        for node in self.taxonomy.breadth_first_traversal():
-            if not node.is_leaf:
-                # [num, denom] => [# correct, # total]
-                node.data['prob_correct_counts'] = [0, 0]
-                node.data['prob'] = 0
+        # For the single binomial taxonomic model, we are learning a single parameter
+        # at each internal node of the taxonomy.
+        skill_counts_num = np.zeros_like(self.pooled_prob_correct_vector)
+        skill_counts_denom = np.zeros_like(self.pooled_prob_correct_vector)
 
-        # Counts for the classes
         class_dist = {node.key: 0. for node in self.taxonomy.leaf_nodes()}
 
-        # Go through each image and add to the counts
-        for i in self.images:
+        # We can limit the effect of power users by sampling at most X annotations from each worker
+        worker_sample_counts = {} # worker id to the number of annotations we have sampled
+        max_worker_sample = 20
 
-            # Does this image have a computer vision annotation?
+        for image_id, image in self.images.iteritems():
+
             has_cv = 0
-            if self.cv_worker and self.cv_worker.id in self.images[i].z:
+            if self.cv_worker and self.cv_worker.id in image.z:
                 has_cv = 1
 
-            # Skip this image if it doesn't have at least human annotations.
-            if len(self.images[i].z) - has_cv <= 1:
+            # Skip this image if it doesn't have at least 2 human annotations.
+            if len(image.z) - has_cv <= 1:
                 continue
 
             # If we have access to a ground truth dataset, then use the label
@@ -529,58 +525,49 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
                 y = gt_dataset.images[i].y.label
             # Otherwise, grab the current prediction for the image
             else:
-                y = self.images[i].y.label
+                y = image.y.label
 
             # Update the class distributions
             class_dist[y] += 1.
 
-            y_node = self.taxonomy.nodes[y]
-            y_level = y_node.level
+            y_integer_id = self.orig_node_key_to_integer_id[y]
+            y_node_list = self.root_to_node_path_list[y_integer_id]
 
             # Go through each worker and add their annotation to the respective
             # counts.
-            for w in self.images[i].z:
+            for worker_id in image.z:
                 # Skip the computer vision annotations
-                if not self.images[i].z[w].is_computer_vision():
+                if not image.z[worker_id].is_computer_vision():
 
-                    # Worker annotation
-                    z = self.images[i].z[w].label
-                    z_node = self.taxonomy.nodes[z]
-                    z_level = z_node.level
+                    if worker_id not in worker_sample_counts:
+                        worker_sample_counts[worker_id] = 0
+                    if worker_sample_counts[worker_id] >= max_worker_sample:
+                        continue
+                    worker_sample_counts[worker_id] += 1
 
-                    # Update the counts for each layer of the taxonomy.
-                    for l in xrange(0, y_level):
+                    z_integer_id = self.orig_node_key_to_integer_id[image.z[worker_id].label]
+                    z_node_list = self.root_to_node_path_list[z_integer_id]
 
-                        # Get the ancestor at level `l` and the child at `l+1`
-                        # for the image label
-                        y_l_node = self.taxonomy.node_at_level_from_node(l, y_node)
-                        y_l_child_node = self.taxonomy.node_at_level_from_node(l + 1, y_node)
+                    # Traverse the paths and update the counts.
+                    # Note that we update the parent count when the children match
+                    for child_node_index in range(1, len(y_node_list)):
+                        y_parent_node = y_node_list[child_node_index - 1]
+                        # update the denominator
+                        skill_vector_index = self.internal_node_integer_id_to_skill_vector_index[y_parent_node]
+                        skill_counts_denom[skill_vector_index] += 1
 
-                        # Update the denominator for prob_correct
-                        y_l_node.data['prob_correct_counts'][1] += 1.
+                        if child_node_index < len(z_node_list):
+                            y_node = y_node_list[child_node_index]
+                            z_node = z_node_list[child_node_index]
+                            if y_node == z_node:
+                                skill_counts_num[skill_vector_index] += 1
 
-                        if l < z_level:
+        # NOTE: `self.prob_correct_prior` should probably be a per node value
+        num = self.prob_correct_prior_beta * self.prob_correct_prior + skill_counts_num
+        denom = self.prob_correct_prior_beta + skill_counts_denom
+        denom = np.clip(denom, a_min=0.00000001, a_max=None)
+        self.pooled_prob_correct_vector = np.clip(num / denom, a_min=0.00000001, a_max=0.99999)
 
-                            # Get the child at `l+1` for the worker's prediction
-                            z_l_child_node = self.taxonomy.node_at_level_from_node(l + 1, z_node)
-
-                            # Are the children nodes the same? If so then the worker
-                            # was correct and we update the parent node
-                            if z_l_child_node == y_l_child_node:
-                                # Update the numerator for prob_correct
-                                y_l_node.data['prob_correct_counts'][0] += 1.
-
-
-        # compute the pooled probability of being correct priors
-        for node in self.taxonomy.breadth_first_traversal():
-            if not node.is_leaf:
-
-                # Probability of predicting the children of a node correctly
-                prob_correct_prior = node.data['prob_correct_prior']
-                prob_correct_num = self.prob_correct_prior_beta * prob_correct_prior + node.data['prob_correct_counts'][0]
-                prob_correct_denom = self.prob_correct_prior_beta + node.data['prob_correct_counts'][1]
-                prob_correct_denom = np.clip(prob_correct_denom, a_min=0.00000001, a_max=None)
-                node.data['prob_correct'] = np.clip(prob_correct_num / prob_correct_denom, a_min=0.00000001, a_max=0.99999)
 
         # Class probabilities (leaf node probabilities)
         num_images = float(np.sum(class_dist.values()))
@@ -597,14 +584,34 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
             for ancestor in leaf_node.ancestors:
                 ancestor.data['prob'] += prob_y
 
+        # Create a node prior vector
+        num_nodes = len(self.taxonomy.nodes)
+        node_priors = np.zeros(num_nodes, dtype=np.float32)
+        for integer_id in xrange(num_nodes):
+            k = self.integer_id_to_orig_node_key[integer_id]
+            node = self.taxonomy.nodes[k]
+            node_priors[integer_id] = node.data['prob']
+        self.node_priors = node_priors
+
+
         # Probability of a worker trusting previous annotations
         # (with a Beta prior)
         if self.model_worker_trust:
             prob_trust_num = self.prob_trust_prior_beta * self.prob_trust_prior
             prob_trust_denom = self.prob_trust_prior_beta
 
+            # We can limit the effect of power users by sampling at most X annotations from each worker
+            worker_sample_counts = {} # worker id to the number of annotations we have sampled
+            max_worker_sample = 20
+
             for worker_id, worker in self.workers.iteritems():
                 for image in worker.images.itervalues():
+
+                    if worker_id not in worker_sample_counts:
+                        worker_sample_counts[worker_id] = 0
+                    if worker_sample_counts[worker_id] >= max_worker_sample:
+                        continue
+                    worker_sample_counts[worker_id] += 1
 
                     if self.recursive_trust:
                         # Only dependent on the imediately previous value
@@ -629,6 +636,9 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
                                     prob_trust_num += 1.
 
             self.prob_trust = np.clip(prob_trust_num / float(prob_trust_denom), 0.00000001, 0.9999)
+
+
+
 
     def initialize_parameters(self, avoid_if_finished=False):
         """Pass on the dataset-wide worker skill priors to the workers.
