@@ -95,7 +95,7 @@ This example demonstrates how to merge redundant binary annotations. This is a "
 
 ## Dataset Format
 
-The minimal JSON format for you data is:
+The minimal JSON format for your data is:
 ```python
 {
     "dataset" : {},
@@ -174,7 +174,10 @@ This code snippet also checks to see if you have any duplicate annotations where
 
 ## Merging the Annotations to Produce a Combined Dataset
 
-At this point we have a dataset in the correct format (stored at `RAW_DATASET`). We can now use the `CrowdDatasetBinaryClassification` class to merge the annotations. You'll need to add the path to the crowdsourcing repo to your PYTHONPATH environment variable. 
+At this point we have a dataset in the correct format (stored at `RAW_DATASET`). We can now use the `CrowdDatasetBinaryClassification` class to merge the annotations. You'll need to add the path to the crowdsourcing repo to your PYTHONPATH environment variable. Something like:
+```
+export PYTHONPATH=$PYTHONPATH:/path/to/crowdsourcing
+```
 
 The following python code will do 3 things:
   1. Loads the raw dataset from `RAW_DATASET` and creates a `CrowdDatasetBinaryClassification` instance.
