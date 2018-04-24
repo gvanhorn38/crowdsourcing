@@ -32,7 +32,8 @@ $ gcc -DNDEBUG -shared -Wl,-install_name,annoprobs -o annoprobs.so -fPIC -Ofast 
 On ubuntu you can compile this file for python usage with:
 $ gcc -DNDEBUG -shared -Wl,-soname,annoprobs -o annoprobs.so -fPIC -Ofast annoprobs.c
 
-If your gcc compiler supports OpenMP directives, then you can add the -fopenmp flag to the above commands.
+If your gcc compiler supports OpenMP directives, then you can add the `-fopenmp` flag to the above commands, e.g.
+$ gcc -DNDEBUG -shared -Wl,-soname,annoprobs -o annoprobs.so -fPIC -Ofast -fopenmp annoprobs.c
 
 */
 
