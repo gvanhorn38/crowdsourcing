@@ -35,6 +35,9 @@ $ gcc -DNDEBUG -shared -Wl,-soname,annoprobs -o annoprobs.so -fPIC -Ofast annopr
 If your gcc compiler supports OpenMP directives, then you can add the `-fopenmp` flag to the above commands, e.g.
 $ gcc -DNDEBUG -shared -Wl,-soname,annoprobs -o annoprobs.so -fPIC -Ofast -fopenmp annoprobs.c
 
+Don't forget to set the number of available threads with:
+export OMP_NUM_THREADS=X
+
 */
 
 #include <stdlib.h>
