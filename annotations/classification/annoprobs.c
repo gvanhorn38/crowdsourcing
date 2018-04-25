@@ -78,7 +78,7 @@ void inner_node_annotation_probs(int n, int l, float *M, float *N, float *P, int
 
     // Get the number of inner node siblings at the first level
     int num_inner_nodes_in_first_block = 0;
-    while(parents[inner_nodes[num_inner_nodes_in_first_block]] == -1 && num_inner_nodes_in_first_block < num_inner_nodes){
+    while(num_inner_nodes_in_first_block < num_inner_nodes && parents[inner_nodes[num_inner_nodes_in_first_block]] == -1){
         num_inner_nodes_in_first_block++;
     }
 
@@ -143,7 +143,7 @@ void inner_node_annotation_probs(int n, int l, float *M, float *N, float *P, int
         }
     }
 
-    int row_offset_parent, row_skills_col, num_to_copy, next_inner_node_parent;
+    int row_offset_parent, row_skills_col, num_to_copy;
     float * parent_row_ptr, * this_row_ptr;
     float parent_row_correct_prob;
     int blk_start;
@@ -403,7 +403,6 @@ void compute_log_likelihoods(int w, int n, int l, int scs, float *M, float *N, f
 
     // Ensure that no NANs were computed for the inner nodes.
     int widx;
-    int found_nan = 0;
     int r, c;
     for(widx=0; widx < w; widx++){
         for(r=0; r < num_inner_nodes; r++){

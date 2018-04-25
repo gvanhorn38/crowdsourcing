@@ -39,8 +39,7 @@ from ...util.taxonomy import Taxonomy
 
 import ctypes
 from numpy.ctypeslib import ndpointer
-so_fp = os.path.join(os.path.dirname(__file__), "annoprobs.so")
-lib = ctypes.cdll.LoadLibrary(so_fp)
+lib = np.ctypeslib.load_library("annoprobs", os.path.dirname(__file__))
 get_class_lls = lib.compute_log_likelihoods
 get_class_lls.restype = None
 get_class_lls.argtypes = [
@@ -48,18 +47,18 @@ get_class_lls.argtypes = [
     ctypes.c_int,
     ctypes.c_int,
     ctypes.c_int,
-    ndpointer(ctypes.c_float),
-    ndpointer(ctypes.c_float),
-    ndpointer(ctypes.c_float),
-    ndpointer(ctypes.c_int),
-    ndpointer(ctypes.c_int),
-    ndpointer(ctypes.c_int),
-    ndpointer(ctypes.c_int),
-    ndpointer(ctypes.c_int),
-    ndpointer(ctypes.c_int),
-    ndpointer(ctypes.c_int),
-    ndpointer(ctypes.c_int),
-    ndpointer(ctypes.c_float)
+    ndpointer(ctypes.c_float, flags="C_CONTIGUOUS"),
+    ndpointer(ctypes.c_float, flags="C_CONTIGUOUS"),
+    ndpointer(ctypes.c_float, flags="C_CONTIGUOUS"),
+    ndpointer(ctypes.c_int, flags="C_CONTIGUOUS"),
+    ndpointer(ctypes.c_int, flags="C_CONTIGUOUS"),
+    ndpointer(ctypes.c_int, flags="C_CONTIGUOUS"),
+    ndpointer(ctypes.c_int, flags="C_CONTIGUOUS"),
+    ndpointer(ctypes.c_int, flags="C_CONTIGUOUS"),
+    ndpointer(ctypes.c_int, flags="C_CONTIGUOUS"),
+    ndpointer(ctypes.c_int, flags="C_CONTIGUOUS"),
+    ndpointer(ctypes.c_int, flags="C_CONTIGUOUS"),
+    ndpointer(ctypes.c_float, flags="C_CONTIGUOUS,WRITEABLE")
 ]
 
 class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
