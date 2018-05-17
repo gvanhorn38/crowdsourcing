@@ -950,8 +950,9 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
             class_log_likelihoods = self._compute_class_log_likelihoods()
 
         # transform back to probabilities:
-        class_exp = np.exp(class_log_likelihoods)
-        class_probabilities = class_exp / np.maximum(0.00000001, class_exp.sum())
+        m = class_log_likelihoods.max()
+        class_exp = np.exp(class_log_likelihoods - m)
+        class_probabilities = class_exp / class_exp.sum()
 
         return class_probabilities
 
