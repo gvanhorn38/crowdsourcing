@@ -469,6 +469,17 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
         self.encode_exclude['default_skill_vector'] = True
         self.encode_exclude['pooled_prob_correct_vector'] = True
 
+        # Construct a node prior vector that modifies the priors to be conditioned on the parent node
+        node_priors_conditioned_on_parent = np.copy(self.node_priors)
+        for node in self.taxonomy.breadth_first_traversal():
+            if not node.is_leaf:
+                parent_prior = node.data['prob']
+                for child in node.children.values():
+                    integer_id = self.orig_node_key_to_integer_id[child.key]
+                    node_priors_conditioned_on_parent[integer_id] /= parent_prior
+        self.node_priors_conditioned_on_parent = node_priors_conditioned_on_parent
+        self.encode_exclude['node_priors_conditioned_on_parent'] = True
+
 
     def estimate_priors(self, gt_dataset=None):
         """Estimate the dataset-wide parameters.
@@ -577,6 +588,16 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
             node = self.taxonomy.nodes[k]
             node_priors[integer_id] = node.data['prob']
         self.node_priors = node_priors
+
+        # Construct a node prior vector that modifies the priors to be conditioned on the parent node
+        node_priors_conditioned_on_parent = np.copy(self.node_priors)
+        for node in self.taxonomy.breadth_first_traversal():
+            if not node.is_leaf:
+                parent_prior = node.data['prob']
+                for child in node.children.values():
+                    integer_id = self.orig_node_key_to_integer_id[child.key]
+                    node_priors_conditioned_on_parent[integer_id] /= parent_prior
+        self.node_priors_conditioned_on_parent = node_priors_conditioned_on_parent
 
 
         # Probability of a worker trusting previous annotations
@@ -854,6 +875,9 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         #     print self.params.root_to_node_path_list[2089]
         #     print prob_prior_responses[:,438]
         #     print prob_prior_responses[:,2088]
+
+        #for i in range(l):
+        #    print i, lls[i]
 
         # Tack on the class priors
         class_log_likelihoods = lls + np.log(class_priors)
@@ -1151,7 +1175,8 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
 
         # Fill in the off diagonals entries of the block diagonals
         pnc = 1 - self.skill_vector[self.params.skill_vector_incorrect_read_indices]
-        ppnc = pnc * self.params.node_priors[self.params.skill_vector_node_priors_read_indices]
+        #ppnc = pnc * self.params.node_priors[self.params.skill_vector_node_priors_read_indices]
+        ppnc = pnc * self.params.node_priors_conditioned_on_parent[self.params.skill_vector_node_priors_read_indices]
         M[self.params.M_incorrect_indices] = ppnc
 
         # Get the probability of not correct
@@ -1159,7 +1184,8 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
         pnc = 1 - pc
 
         # Multiply the probability of not correct by the prior on the node
-        N[:] = self.params.node_priors[1:] * pnc
+        #N[:] = self.params.node_priors[1:] * pnc
+        N[:] = self.params.node_priors_conditioned_on_parent[1:] * pnc
 
     # def build_M_and_N_old(self, M, N):
     #     # NOTE: this return M.T!
@@ -1273,7 +1299,8 @@ class CrowdLabelMulticlassSingleBinomial(CrowdLabel):
         """ The likelihood of the label.
         """
         prob_correct = self.worker.skill_vector
-        node_probs = self.worker.params.node_priors
+        #node_probs = self.worker.params.node_priors
+        node_probs = self.worker.params.node_priors_conditioned_on_parent
 
         internal_node_integer_id_to_skill_vector_index = self.worker.params.internal_node_integer_id_to_skill_vector_index
 
