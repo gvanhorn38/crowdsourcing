@@ -61,6 +61,28 @@ get_class_lls.argtypes = [
     ndpointer(ctypes.c_float, flags="C_CONTIGUOUS,WRITEABLE")
 ]
 
+get_prob_prior_responses = lib.compute_probability_of_prior_responses
+get_prob_prior_responses.restype = None
+get_prob_prior_responses.argtypes = [
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ndpointer(ctypes.c_float, flags="C_CONTIGUOUS"),
+    ndpointer(ctypes.c_float, flags="C_CONTIGUOUS"),
+    ndpointer(ctypes.c_float, flags="C_CONTIGUOUS"),
+    ndpointer(ctypes.c_int, flags="C_CONTIGUOUS"),
+    ndpointer(ctypes.c_int, flags="C_CONTIGUOUS"),
+    ndpointer(ctypes.c_int, flags="C_CONTIGUOUS"),
+    ndpointer(ctypes.c_int, flags="C_CONTIGUOUS"),
+    ndpointer(ctypes.c_int, flags="C_CONTIGUOUS"),
+    ndpointer(ctypes.c_int, flags="C_CONTIGUOUS"),
+    ndpointer(ctypes.c_int, flags="C_CONTIGUOUS"),
+    ctypes.c_int,
+    ctypes.c_int,
+    ndpointer(ctypes.c_float, flags="C_CONTIGUOUS,WRITEABLE"),
+    ndpointer(ctypes.c_float, flags="C_CONTIGUOUS,WRITEABLE")
+]
+
 class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
     """ A dataset for multiclass labeling across a taxonomy.
     """
@@ -654,10 +676,15 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
             if avoid_if_finished and worker.finished:
                 continue
 
-            if self.model_worker_trust:
-                worker.prob_trust = self.prob_trust
+            #if self.model_worker_trust:
+            #    worker.prob_trust = self.prob_trust
 
             worker.skill_vector = np.copy(self.default_skill_vector)
+            worker.node_prior_vector = np.copy(self.node_priors_conditioned_on_parent)
+
+            if self.model_worker_trust:
+                worker.skill_perception_vector = np.copy(self.default_skill_vector)
+                worker.node_prior_perception_vector = np.copy(self.node_priors_conditioned_on_parent)
 
     def parse(self, data):
         super(CrowdDatasetMulticlassSingleBinomial, self).parse(data)
@@ -702,7 +729,24 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         self.y = CrowdLabelMulticlassSingleBinomial(
             image=self, worker=None, label=pred_y)
 
-    def _get_worker_labels_and_trust(self):
+    def _get_worker_labels(self):
+        # Collect the relevant data from each worker to build the prob_prior_responses tensor.
+
+        ncv = self.params.naive_computer_vision
+        num_workers = sum([1 for anno in self.z.itervalues() if not anno.is_computer_vision() or ncv])
+
+        worker_labels = np.empty(num_workers, dtype=np.int32)
+
+        w = 0
+        for anno in self.z.itervalues():
+            if not anno.is_computer_vision() or ncv:
+                integer_label = self.params.orig_node_key_to_integer_id[anno.label]
+                worker_labels[w] = integer_label
+                w += 1
+
+        return worker_labels
+
+    def _get_worker_labels_and_trust_prev(self):
         # Collect the relevant data from each worker to build the prob_prior_responses tensor.
 
         ncv = self.params.naive_computer_vision
@@ -721,7 +765,108 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
 
         return worker_labels, worker_prob_trust
 
-    def _make_probability_of_prior_responses(self, worker_labels, worker_prob_trust, node_priors):
+    def _make_probability_of_prior_responses(self):
+
+        num_nodes = self.params.node_priors.shape[0]
+        inner_node_indices = self.params.inner_node_integer_ids
+        leaf_node_indices = self.params.leaf_integer_ids
+        num_classes = leaf_node_indices.shape[0]
+        num_inner_nodes = inner_node_indices.shape[0]
+
+        ncv = self.params.naive_computer_vision
+        num_workers = sum([1 for anno in self.z.itervalues() if not anno.is_computer_vision() or ncv])
+
+        # Collect the worker labels, P and R
+        worker_labels = np.empty(num_workers, dtype=np.int32)
+        P = np.empty([num_workers, self.params.scs], dtype=np.float32)
+        R = np.empty([num_workers, num_nodes - 1], dtype=np.float32)
+        w = 0
+        for anno in self.z.itervalues():
+            if not anno.is_computer_vision() or ncv:
+                integer_label = self.params.orig_node_key_to_integer_id[anno.label]
+                worker_labels[w] = integer_label
+                anno.worker.build_P_and_R(P[w], R[w])
+                w += 1
+
+        # Shift the annotations down by one to account for the root node
+        worker_labels = worker_labels - 1
+
+        # Initialize with 1s (the recursive stopping condition)
+        prob_prior_responses = np.ones((num_workers, num_nodes -1), dtype=np.float32)
+        if num_workers > 1:
+
+            n = num_nodes - 1 # account for the root node
+            l = num_classes
+            scs = self.params.scs
+
+            M_offset_indices = self.params.M_offset_indices # [n]
+            num_siblings = self.params.num_siblings # [n]
+            parents = self.params.parent_indices # [n]
+            inner_nodes = self.params.inner_node_integer_ids - 1 # shift things down to account for the root.
+            leaf_nodes = leaf_node_indices - 1
+            parent_offset_when_excluding_leaves = self.params.parent_offset_when_excluding_leaves
+            block_starts = self.params.block_starts
+
+            for w in range(1, num_workers):
+
+                prp_inner = np.empty(n-l, dtype=np.float32)
+                prp_leaf = np.empty(l, dtype=np.float32)
+
+                # Compute the probability of the previous responses given any response from each worker
+                get_prob_prior_responses(
+                    n, l, scs,
+                    P[w], R[w], prob_prior_responses[w - 1],
+                    M_offset_indices, num_siblings,
+                    parents, inner_nodes, leaf_nodes, parent_offset_when_excluding_leaves, block_starts,
+                    worker_labels[w - 1],
+                    1 if w > 1 else 0, # normalize term, which we don't want for worker 1 (i.e when t=1)
+                    prp_inner, prp_leaf
+                )
+
+                # move the probabilities into their respective (ordered) locations
+                inner_idx = 0
+                leaf_idx = 0
+                for node_idx in range(1, num_nodes):
+                    if inner_idx < num_inner_nodes and inner_node_indices[inner_idx] == node_idx:
+                        prob_prior_responses[w, node_idx - 1] = prp_inner[inner_idx]
+                        inner_idx += 1
+                    else:
+                        assert leaf_node_indices[leaf_idx] == node_idx, "%d != %d" % (leaf_node_indices[leaf_idx], node_idx)
+                        prob_prior_responses[w, node_idx - 1] = prp_leaf[leaf_idx]
+                        leaf_idx += 1
+
+
+        # DEBUGGING stuff
+        if self.id == '4892227':
+            y_int = worker_labels[0]
+            print "Label: %d" % y_int
+            print "Worker Data:"
+            for w in range(num_workers):
+                print "Response %d, PPR %0.5f (max PPR %0.5f at %d)" % (worker_labels[w], prob_prior_responses[w, y_int], np.max(prob_prior_responses[w]), np.argmax(prob_prior_responses[w]))
+
+            l = worker_labels[0] + 1 # we subtracted one above
+            l_node_list = self.params.root_to_node_path_list[l]
+
+            print "Worker PPR ancestor values:"
+            for w in range(num_workers):
+                print ["%0.5f" % prob_prior_responses[w, a - 1] for a in l_node_list[1:]]
+
+            print "Worker Skill Perception P:"
+            l = l - 1
+            for w in range(num_workers):
+                print ["%0.5f" % x for x in P[w][M_offset_indices[l]:M_offset_indices[l] + num_siblings[l]].tolist()]
+
+            print "Worker Skill Perception R (ancestors to label):"
+            l = l - 1
+            for w in range(num_workers):
+                print ["%0.5f" % R[w][a - 1] for a in l_node_list[1:]]
+
+
+
+        return prob_prior_responses
+
+
+    def _make_probability_of_prior_responses_prev(self, worker_labels, worker_prob_trust, node_priors):
         """ Build a tensor that stores the probability of prior annotations given that a worker said "z".
         Args:
             worker_labels (numpy.ndarray int32): The worker annotations, should be in the range [0, num_nodes)
@@ -806,7 +951,8 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         num_classes = leaf_node_indices.shape[0]
 
         # Collect the relevant data from each worker to build the prob_prior_responses tensor.
-        worker_labels, worker_prob_trust = self._get_worker_labels_and_trust()
+        #worker_labels, worker_prob_trust = self._get_worker_labels_and_trust()
+        worker_labels = self._get_worker_labels()
         num_workers = worker_labels.shape[0]
         ncv = self.params.naive_computer_vision
 
@@ -816,7 +962,8 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         # Each worker j will represent a row. Each column z will represent
         # a node. Each entry [j, z] will be the probability of the previous
         # annotations given that the worker j provided label z.
-        prob_prior_responses = self._make_probability_of_prior_responses(worker_labels, worker_prob_trust, node_priors)
+        #prob_prior_responses = self._make_probability_of_prior_responses(worker_labels, worker_prob_trust, node_priors)
+        prob_prior_responses = self._make_probability_of_prior_responses()
 
         # Store these computions with the labels, to be used when computing the log likelihood.
         wind = 0
@@ -882,14 +1029,47 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         # Tack on the class priors
         class_log_likelihoods = lls + np.log(class_priors)
 
-        # if self.id == "1442526":
-        #     print np.argmax(class_log_likelihoods)
-        #     print self.params.leaf_integer_ids[np.argmax(class_log_likelihoods)]
-        #     print lls[np.argmax(class_log_likelihoods)]
-        #     print np.log(class_priors)[np.argmax(class_log_likelihoods)]
-            # l = worker_labels[0] - 1
-            # for wid in range(num_workers):
-            #     print M[wid][M_offset_indices[l]:M_offset_indices[l] + num_siblings[l]]
+        if self.id == "4892227":
+            #print np.argmax(class_log_likelihoods)
+            print "ML prediction: %d" % (self.params.leaf_integer_ids[np.argmax(class_log_likelihoods)] - 1,)
+            print "ML log likelihood: %0.5f" % lls[np.argmax(class_log_likelihoods)]
+            print "ML class prior: %0.5f" % np.log(class_priors)[np.argmax(class_log_likelihoods)]
+            l = worker_labels[0] # we already subtracted one above
+            l_node_list = self.params.root_to_node_path_list[l + 1]
+            print "Worker skill data M: (siblings to label)"
+            for wid in range(num_workers):
+                print ["%0.5f" % x for x in M[wid][M_offset_indices[l]:M_offset_indices[l] + num_siblings[l]].tolist()]
+
+            print "Worker skill data N: (ancestors to label):"
+            for w in range(num_workers):
+                print ["%0.5f" % N[w][a - 1] for a in l_node_list[1:]]
+
+            arg_max_index = np.argmax(class_log_likelihoods)
+            pred_y_integer_id = self.params.leaf_integer_ids[arg_max_index]
+            pred_y = self.params.integer_id_to_orig_node_key[pred_y_integer_id]
+
+            parent_node = self.params.taxonomy.nodes[pred_y].parent
+            sibling_int_ids = [self.params.orig_node_key_to_integer_id[c_key] for c_key in parent_node.children]
+            print "Worker skill data N: (siblings to label):"
+            for w in range(num_workers):
+                print ["%0.5f" % N[w][s - 1] for s in sibling_int_ids]
+
+
+            m = class_log_likelihoods.max()
+            class_exp = np.exp(class_log_likelihoods - m)
+            class_probabilities = class_exp / class_exp.sum()
+
+            print "Sibling Probabilities:"
+            for sibling_int_id in sibling_int_ids:
+                prob_idx = np.argwhere(self.params.leaf_integer_ids == sibling_int_id)[0][0]
+                print "%d: %0.5f" % (sibling_int_id, class_probabilities[prob_idx])
+
+            print "Sorted class probs:"
+            for idx in np.argsort(class_probabilities)[::-1][:10]:
+                print "%d: %0.5f" % (self.params.leaf_integer_ids[idx], class_probabilities[idx])
+
+            print self.params.root_to_node_path_list[36]
+            print self.params.root_to_node_path_list[254]
 
         return class_log_likelihoods
 
@@ -1041,18 +1221,25 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
         self.skill = None
 
         # Copy over the global probabilities
-        self.taxonomy = None
-        self.encode_exclude['taxonomy'] = True
+        #self.taxonomy = None
+        #self.encode_exclude['taxonomy'] = True
 
-        self.prob_trust = params.prob_trust
-        self._rec_cache = {}
-        self.encode_exclude['_rec_cache'] = True
+        #self.prob_trust = params.prob_trust
+        #self._rec_cache = {}
+        #self.encode_exclude['_rec_cache'] = True
 
+        # Skill estimates for this worker
         self.skill_vector = None
-        self.M = None
-        self.N = None
-        self.encode_exclude['M'] = True
-        self.encode_exclude['N'] = True
+        self.node_prior_vector = None # how likely is this worker to choose a particular node?
+
+        # Perception of other workers' skills
+        self.skill_perception_vector = None
+        self.node_prior_perception_vector = None
+
+        #self.M = None
+        #self.N = None
+        #self.encode_exclude['M'] = True
+        #self.encode_exclude['N'] = True
 
 
     def compute_log_likelihood(self):
@@ -1069,8 +1256,16 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
         )
 
         if self.params.model_worker_trust:
-            ll += ((self.params.prob_trust * self.params.prob_trust_beta - 1) * math.log(self.prob_trust) +
-                   ((1 - self.params.prob_trust) * self.params.prob_trust_beta - 1) * math.log(1. - self.prob_trust))
+
+            prob_correct = self.skill_perception_vector
+
+            ll += np.sum(
+                (pooled_prob_correct * self.params.prob_correct_beta - 1) * np.log(prob_correct) +
+                (( 1. - pooled_prob_correct) * self.params.prob_correct_beta - 1) * np.log( 1. - prob_correct)
+            )
+
+            #ll += ((self.params.prob_trust * self.params.prob_trust_beta - 1) * math.log(self.prob_trust) +
+            #       ((1 - self.params.prob_trust) * self.params.prob_trust_beta - 1) * math.log(1. - self.prob_trust))
 
         return ll
 
@@ -1130,39 +1325,139 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
         self.prob = prob
         self.skill = [self.prob]
 
+
+        # Estimate the probability of this worker choosing a particular node
+        node_counts = np.zeros_like(self.params.node_priors)
+        for image in self.images.itervalues():
+            z_integer_id = self.params.orig_node_key_to_integer_id[image.z[self.id].label]
+            z_node_list = self.params.root_to_node_path_list[z_integer_id]
+            node_counts[z_node_list] += 1
+
+        node_probs_conditioned_on_parent = np.zeros_like(node_counts)
+        for node in self.params.taxonomy.inner_nodes():
+            parent_int_id = self.params.orig_node_key_to_integer_id[node.key]
+            parent_count = node_counts[parent_int_id]
+            num_children = len(node.children)
+
+            # A prior of seeing 10 instances of each child
+            denom = (10 * num_children) + parent_count
+
+            for child in node.children.values():
+                child_int_id = self.params.orig_node_key_to_integer_id[child.key]
+                child_count = node_counts[child_int_id]
+
+                # A prior of seeing 10 instances of each child
+                num = 10. + child_count
+
+                node_probs_conditioned_on_parent[child_int_id] = num / denom
+        node_probs_conditioned_on_parent[0] = 1
+        self.node_prior_vector = node_probs_conditioned_on_parent
+
+
         # Estimate our probability of trusting previous annotations by looking
         # at our agreement with previous annotations
         if self.params.model_worker_trust:
-            prob_trust_num = self.params.prob_trust_beta * self.params.prob_trust
-            prob_trust_denom = self.params.prob_trust_beta
+
+
+            # Perception of other workers' skills
+            skill_perception_counts_num = np.zeros_like(self.params.pooled_prob_correct_vector)
+            skill_perception_counts_denom = np.zeros_like(self.params.pooled_prob_correct_vector)
 
             for image in self.images.itervalues():
 
                 if self.params.recursive_trust:
-                    # We are only dependent on the annotation immediately
-                    # before us.
+
+                    # Is there a previous response?
                     our_t = image.z.keys().index(self.id)
                     if our_t > 0:
+
+
                         our_label = image.z[self.id].label
-                        prev_anno = image.z.values()[our_t - 1]
+                        prev_label = image.z.values()[our_t - 1].label
 
-                        prob_trust_denom += 1.
-                        if our_label == prev_anno.label:
-                            prob_trust_num += 1.
+                        y_integer_id = self.params.orig_node_key_to_integer_id[our_label]
+                        z_integer_id = self.params.orig_node_key_to_integer_id[prev_label]
+
+                        y_node_list = self.params.root_to_node_path_list[y_integer_id]
+                        z_node_list = self.params.root_to_node_path_list[z_integer_id]
+
+                        # Traverse the paths and update the counts.
+                        # Note that we update the parent count when the children match
+                        for child_node_index in range(1, len(y_node_list)):
+                            y_parent_node = y_node_list[child_node_index - 1]
+                            # update the denominator
+                            skill_vector_index = internal_node_integer_id_to_skill_vector_index[y_parent_node]
+                            skill_perception_counts_denom[skill_vector_index] += 1
+
+                            if child_node_index < len(z_node_list):
+                                y_node = y_node_list[child_node_index]
+                                z_node = z_node_list[child_node_index]
+                                if y_node == z_node:
+                                    skill_perception_counts_num[skill_vector_index] += 1
+
                 else:
-                    # We treat each previous label independently
-                    our_label = image.z[self.id].label
-                    for prev_worker_id, prev_anno in image.z.iteritems():
-                        if prev_worker_id == self.id:
-                            break
-                        if not prev_anno.is_computer_vision() or self.params.naive_computer_vision:
-                            prob_trust_denom += 1.
-                            if our_label == prev_anno.label:
-                                prob_trust_num += 1.
+                    raise NotImplemented()
 
-            self.prob_trust = np.clip(
-                prob_trust_num / float(prob_trust_denom), 0.00000001, 0.9999)
-            self.skill.append(self.prob_trust)
+
+            num = self.params.prob_correct_beta * self.params.pooled_prob_correct_vector + skill_perception_counts_num
+            denom = self.params.prob_correct_beta + skill_perception_counts_denom
+            denom = np.clip(denom, a_min=0.00000001, a_max=None)
+            self.skill_perception_vector = np.clip(num / denom, a_min=0.00000001, a_max=0.99999)
+
+            # At each inner node, we want to compute the probability that a worker will select a particular child node.
+            # This is just a multinomial over the children
+            # Estimate the probability of other workers choosing a particular node
+            node_counts = np.zeros_like(self.params.node_priors)
+            for image in self.images.itervalues():
+
+                our_t = image.z.keys().index(self.id)
+                if our_t > 0:
+                    for t in range(our_t):
+                        prev_label = image.z.values()[t].label
+
+                        z_integer_id = self.params.orig_node_key_to_integer_id[prev_label]
+                        z_node_list = self.params.root_to_node_path_list[z_integer_id]
+                        node_counts[z_node_list] += 1
+
+            node_priors_conditioned_on_parent = np.zeros_like(node_counts)
+            for node in self.params.taxonomy.inner_nodes():
+                parent_int_id = self.params.orig_node_key_to_integer_id[node.key]
+                parent_count = node_counts[parent_int_id]
+                num_children = len(node.children)
+
+                # A prior of seeing 10 instances of each child
+                denom = (10 * num_children) + parent_count
+
+                for child in node.children.values():
+                    child_int_id = self.params.orig_node_key_to_integer_id[child.key]
+                    child_count = node_counts[child_int_id]
+
+                    # A prior of seeing 10 instances of each child
+                    num = 10. + child_count
+
+                    node_priors_conditioned_on_parent[child_int_id] = num / denom
+
+            node_priors_conditioned_on_parent[0] = 1
+            self.node_prior_perception_vector = node_priors_conditioned_on_parent
+
+
+    def build_P_and_R(self, P, R):
+        """
+        Basically the exact same as M and N, except this is the worker's perception of another
+        worker's skill
+        """
+
+        P[self.params.M_correct_indices] = self.skill_perception_vector[self.params.skill_vector_correct_read_indices]
+
+        # Fill in the off diagonals entries of the block diagonals
+        pnc = 1. - self.skill_perception_vector[self.params.skill_vector_incorrect_read_indices]
+        #ppnc = pnc * self.params.node_priors[self.params.skill_vector_node_priors_read_indices]
+        ppnc = pnc * self.params.node_priors_conditioned_on_parent[self.params.skill_vector_node_priors_read_indices]
+        P[self.params.M_incorrect_indices] = ppnc
+
+        # Simply copy over the perception of other workers choosing particular nodes.
+        R[:] = self.node_prior_perception_vector[1:] # don't need the root node
+
 
 
     def build_M_and_N(self, M, N):
@@ -1174,18 +1469,19 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
         M[self.params.M_correct_indices] = self.skill_vector[self.params.skill_vector_correct_read_indices]
 
         # Fill in the off diagonals entries of the block diagonals
-        pnc = 1 - self.skill_vector[self.params.skill_vector_incorrect_read_indices]
+        pnc = 1. - self.skill_vector[self.params.skill_vector_incorrect_read_indices]
         #ppnc = pnc * self.params.node_priors[self.params.skill_vector_node_priors_read_indices]
         ppnc = pnc * self.params.node_priors_conditioned_on_parent[self.params.skill_vector_node_priors_read_indices]
         M[self.params.M_incorrect_indices] = ppnc
 
         # Get the probability of not correct
-        pc = self.skill_vector[self.params.skill_vector_N_indices]
-        pnc = 1 - pc
+        #pc = self.skill_vector[self.params.skill_vector_N_indices]
+        #pnc = 1 - pc
 
         # Multiply the probability of not correct by the prior on the node
         #N[:] = self.params.node_priors[1:] * pnc
-        N[:] = self.params.node_priors_conditioned_on_parent[1:] * pnc
+        #N[:] = self.params.node_priors_conditioned_on_parent[1:] * pnc
+        N[:] = self.node_prior_vector[1:]
 
     # def build_M_and_N_old(self, M, N):
     #     # NOTE: this return M.T!
@@ -1264,10 +1560,17 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
 
     #     #return M, N.astype(np.float32)
 
+
     def parse(self, data):
         super(CrowdWorkerMulticlassSingleBinomial, self).parse(data)
         if 'skill_vector' in data:
             self.skill_vector = np.array(data['skill_vector'])
+        if 'node_prior_vector' in data:
+            self.node_prior_vector = np.array(data['node_prior_vector'])
+        if 'skill_perception_vector' in data:
+            self.skill_perception_vector = np.array(data['skill_perception_vector'])
+        if 'node_prior_perception_vector' in data:
+            self.node_prior_perception_vector = np.array(data['node_prior_perception_vector'])
             #self.build_M_and_N()
         #if 'taxonomy_data' in data:
         #    self.taxonomy = Taxonomy()
@@ -1278,6 +1581,12 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
         data = super(CrowdWorkerMulticlassSingleBinomial, self).encode()
         if self.skill_vector is not None:
             data['skill_vector'] = self.skill_vector.tolist()
+        if self.node_prior_vector is not None:
+            data['node_prior_vector'] = self.node_prior_vector.tolist()
+        if self.skill_perception_vector is not None:
+            data['skill_perception_vector'] = self.skill_perception_vector.tolist()
+        if self.node_prior_perception_vector is not None:
+            data['node_prior_perception_vector'] = self.node_prior_perception_vector.tolist()
         #if self.taxonomy is not None:
         #    data['taxonomy_data'] = self.taxonomy.export()
         return data
