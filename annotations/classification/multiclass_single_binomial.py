@@ -837,29 +837,29 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
 
 
         # DEBUGGING stuff
-        if self.id == '4892227':
-            y_int = worker_labels[0]
-            print "Label: %d" % y_int
-            print "Worker Data:"
-            for w in range(num_workers):
-                print "Response %d, PPR %0.5f (max PPR %0.5f at %d)" % (worker_labels[w], prob_prior_responses[w, y_int], np.max(prob_prior_responses[w]), np.argmax(prob_prior_responses[w]))
+        # if self.id == '4892227':
+        #     y_int = worker_labels[0]
+        #     print "Label: %d" % y_int
+        #     print "Worker Data:"
+        #     for w in range(num_workers):
+        #         print "Response %d, PPR %0.5f (max PPR %0.5f at %d)" % (worker_labels[w], prob_prior_responses[w, y_int], np.max(prob_prior_responses[w]), np.argmax(prob_prior_responses[w]))
 
-            l = worker_labels[0] + 1 # we subtracted one above
-            l_node_list = self.params.root_to_node_path_list[l]
+        #     l = worker_labels[0] + 1 # we subtracted one above
+        #     l_node_list = self.params.root_to_node_path_list[l]
 
-            print "Worker PPR ancestor values:"
-            for w in range(num_workers):
-                print ["%0.5f" % prob_prior_responses[w, a - 1] for a in l_node_list[1:]]
+        #     print "Worker PPR ancestor values:"
+        #     for w in range(num_workers):
+        #         print ["%0.5f" % prob_prior_responses[w, a - 1] for a in l_node_list[1:]]
 
-            print "Worker Skill Perception P:"
-            l = l - 1
-            for w in range(num_workers):
-                print ["%0.5f" % x for x in P[w][M_offset_indices[l]:M_offset_indices[l] + num_siblings[l]].tolist()]
+        #     print "Worker Skill Perception P:"
+        #     l = l - 1
+        #     for w in range(num_workers):
+        #         print ["%0.5f" % x for x in P[w][M_offset_indices[l]:M_offset_indices[l] + num_siblings[l]].tolist()]
 
-            print "Worker Skill Perception R (ancestors to label):"
-            l = l - 1
-            for w in range(num_workers):
-                print ["%0.5f" % R[w][a - 1] for a in l_node_list[1:]]
+        #     print "Worker Skill Perception R (ancestors to label):"
+        #     l = l - 1
+        #     for w in range(num_workers):
+        #         print ["%0.5f" % R[w][a - 1] for a in l_node_list[1:]]
 
 
 
@@ -1029,47 +1029,47 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         # Tack on the class priors
         class_log_likelihoods = lls + np.log(class_priors)
 
-        if self.id == "4892227":
-            #print np.argmax(class_log_likelihoods)
-            print "ML prediction: %d" % (self.params.leaf_integer_ids[np.argmax(class_log_likelihoods)] - 1,)
-            print "ML log likelihood: %0.5f" % lls[np.argmax(class_log_likelihoods)]
-            print "ML class prior: %0.5f" % np.log(class_priors)[np.argmax(class_log_likelihoods)]
-            l = worker_labels[0] # we already subtracted one above
-            l_node_list = self.params.root_to_node_path_list[l + 1]
-            print "Worker skill data M: (siblings to label)"
-            for wid in range(num_workers):
-                print ["%0.5f" % x for x in M[wid][M_offset_indices[l]:M_offset_indices[l] + num_siblings[l]].tolist()]
+        # if self.id == "4892227":
+        #     #print np.argmax(class_log_likelihoods)
+        #     print "ML prediction: %d" % (self.params.leaf_integer_ids[np.argmax(class_log_likelihoods)] - 1,)
+        #     print "ML log likelihood: %0.5f" % lls[np.argmax(class_log_likelihoods)]
+        #     print "ML class prior: %0.5f" % np.log(class_priors)[np.argmax(class_log_likelihoods)]
+        #     l = worker_labels[0] # we already subtracted one above
+        #     l_node_list = self.params.root_to_node_path_list[l + 1]
+        #     print "Worker skill data M: (siblings to label)"
+        #     for wid in range(num_workers):
+        #         print ["%0.5f" % x for x in M[wid][M_offset_indices[l]:M_offset_indices[l] + num_siblings[l]].tolist()]
 
-            print "Worker skill data N: (ancestors to label):"
-            for w in range(num_workers):
-                print ["%0.5f" % N[w][a - 1] for a in l_node_list[1:]]
+        #     print "Worker skill data N: (ancestors to label):"
+        #     for w in range(num_workers):
+        #         print ["%0.5f" % N[w][a - 1] for a in l_node_list[1:]]
 
-            arg_max_index = np.argmax(class_log_likelihoods)
-            pred_y_integer_id = self.params.leaf_integer_ids[arg_max_index]
-            pred_y = self.params.integer_id_to_orig_node_key[pred_y_integer_id]
+        #     arg_max_index = np.argmax(class_log_likelihoods)
+        #     pred_y_integer_id = self.params.leaf_integer_ids[arg_max_index]
+        #     pred_y = self.params.integer_id_to_orig_node_key[pred_y_integer_id]
 
-            parent_node = self.params.taxonomy.nodes[pred_y].parent
-            sibling_int_ids = [self.params.orig_node_key_to_integer_id[c_key] for c_key in parent_node.children]
-            print "Worker skill data N: (siblings to label):"
-            for w in range(num_workers):
-                print ["%0.5f" % N[w][s - 1] for s in sibling_int_ids]
+        #     parent_node = self.params.taxonomy.nodes[pred_y].parent
+        #     sibling_int_ids = [self.params.orig_node_key_to_integer_id[c_key] for c_key in parent_node.children]
+        #     print "Worker skill data N: (siblings to label):"
+        #     for w in range(num_workers):
+        #         print ["%0.5f" % N[w][s - 1] for s in sibling_int_ids]
 
 
-            m = class_log_likelihoods.max()
-            class_exp = np.exp(class_log_likelihoods - m)
-            class_probabilities = class_exp / class_exp.sum()
+        #     m = class_log_likelihoods.max()
+        #     class_exp = np.exp(class_log_likelihoods - m)
+        #     class_probabilities = class_exp / class_exp.sum()
 
-            print "Sibling Probabilities:"
-            for sibling_int_id in sibling_int_ids:
-                prob_idx = np.argwhere(self.params.leaf_integer_ids == sibling_int_id)[0][0]
-                print "%d: %0.5f" % (sibling_int_id, class_probabilities[prob_idx])
+        #     print "Sibling Probabilities:"
+        #     for sibling_int_id in sibling_int_ids:
+        #         prob_idx = np.argwhere(self.params.leaf_integer_ids == sibling_int_id)[0][0]
+        #         print "%d: %0.5f" % (sibling_int_id, class_probabilities[prob_idx])
 
-            print "Sorted class probs:"
-            for idx in np.argsort(class_probabilities)[::-1][:10]:
-                print "%d: %0.5f" % (self.params.leaf_integer_ids[idx], class_probabilities[idx])
+        #     print "Sorted class probs:"
+        #     for idx in np.argsort(class_probabilities)[::-1][:10]:
+        #         print "%d: %0.5f" % (self.params.leaf_integer_ids[idx], class_probabilities[idx])
 
-            print self.params.root_to_node_path_list[36]
-            print self.params.root_to_node_path_list[254]
+        #     print self.params.root_to_node_path_list[36]
+        #     print self.params.root_to_node_path_list[254]
 
         return class_log_likelihoods
 
