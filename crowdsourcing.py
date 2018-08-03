@@ -567,7 +567,7 @@ class CrowdDataset(object):
 
         return err / float(num_images)
 
-    def load(self, fname, max_assignments=None, sort_annos=False,
+    def load(self, fname=None, data=None, max_assignments=None, sort_annos=False,
              overwrite_workers=True, load_dataset=True, load_workers=True,
              load_images=True, load_annos=True, load_gt_annos=True,
              load_combined_labels=True):
@@ -578,9 +578,15 @@ class CrowdDataset(object):
             (e.g. maybe we are loading in a new data after learning worker
             skill parameters).
         """
-        self.fname = fname
-        with open(fname) as f:
-            data = json.load(f)
+        if data is None and fname is None:
+            print("Error: Must specify a file name to load or a datset dictionary.")
+            return False
+
+        if fname is not None:
+            self.fname = fname
+            with open(fname) as f:
+                data = json.load(f)
+                
         #self.images = {} #NOTE: I don't think we want to reset the images here.
         if overwrite_workers:
             self.workers = {}
