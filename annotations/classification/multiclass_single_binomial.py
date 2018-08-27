@@ -807,7 +807,11 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
             parent_offset_when_excluding_leaves = self.params.parent_offset_when_excluding_leaves
             block_starts = self.params.block_starts
 
+            #print "GET PROB PRIOR"
+
             for w in range(1, num_workers):
+
+                #print "Worker %d" % w
 
                 prp_inner = np.empty(n-l, dtype=np.float32)
                 prp_leaf = np.empty(l, dtype=np.float32)
@@ -837,29 +841,40 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
 
 
         # DEBUGGING stuff
-        # if self.id == '4892227':
-        #     y_int = worker_labels[0]
-        #     print "Label: %d" % y_int
-        #     print "Worker Data:"
-        #     for w in range(num_workers):
-        #         print "Response %d, PPR %0.5f (max PPR %0.5f at %d)" % (worker_labels[w], prob_prior_responses[w, y_int], np.max(prob_prior_responses[w]), np.argmax(prob_prior_responses[w]))
+        if False: #worker_labels.shape[0] > 1: #self.id == '4892227':
+            y_int = worker_labels[0]
+            print "Label: %d" % y_int
+            print "Worker Data:"
+            for w in range(num_workers):
+                print "Response %d, PPR %0.5f (max PPR %0.5f at %d)" % (worker_labels[w], prob_prior_responses[w, y_int], np.max(prob_prior_responses[w]), np.argmax(prob_prior_responses[w]))
 
-        #     l = worker_labels[0] + 1 # we subtracted one above
-        #     l_node_list = self.params.root_to_node_path_list[l]
+            l = worker_labels[0] + 1 # we subtracted one above
+            l_node_list = self.params.root_to_node_path_list[l]
 
-        #     print "Worker PPR ancestor values:"
-        #     for w in range(num_workers):
-        #         print ["%0.5f" % prob_prior_responses[w, a - 1] for a in l_node_list[1:]]
+            print "Worker PPR ancestor values:"
+            for w in range(num_workers):
+                print ["%0.5f" % prob_prior_responses[w, a - 1] for a in l_node_list[1:]]
 
-        #     print "Worker Skill Perception P:"
-        #     l = l - 1
-        #     for w in range(num_workers):
-        #         print ["%0.5f" % x for x in P[w][M_offset_indices[l]:M_offset_indices[l] + num_siblings[l]].tolist()]
+            print "Worker Skill Perception P:"
+            l = l - 1
+            for w in range(num_workers):
+                print ["%0.5f" % x for x in P[w][M_offset_indices[l]:M_offset_indices[l] + num_siblings[l]].tolist()]
 
-        #     print "Worker Skill Perception R (ancestors to label):"
-        #     l = l - 1
-        #     for w in range(num_workers):
-        #         print ["%0.5f" % R[w][a - 1] for a in l_node_list[1:]]
+            print "Worker Skill Perception R (ancestors to label):"
+            for w in range(num_workers):
+                print ["%0.5f" % R[w][a - 1] for a in l_node_list[1:]]
+
+            parent_node = self.params.taxonomy.nodes[self.params.integer_id_to_orig_node_key[y_int + 1]].parent
+            sibling_int_ids = [self.params.orig_node_key_to_integer_id[c_key] for c_key in parent_node.children]
+            print "Sibling node int ids ", sibling_int_ids
+
+            print "Worker skill Perception R (siblings to label):"
+            for w in range(num_workers):
+                print ["%0.5f" % R[w][s - 1] for s in sibling_int_ids]
+
+            print "Probability of prior response of sibling nodes:"
+            for w in range(num_workers):
+                print ["%0.5f" % prob_prior_responses[w][s - 1] for s in sibling_int_ids]
 
 
 
@@ -1457,7 +1472,7 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
 
         # Simply copy over the perception of other workers choosing particular nodes.
         R[:] = self.node_prior_perception_vector[1:] # don't need the root node
-
+        #R[:] = self.params.node_priors_conditioned_on_parent[1:]
 
 
     def build_M_and_N(self, M, N):

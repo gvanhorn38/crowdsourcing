@@ -417,8 +417,11 @@ float compute_class_log_likelihood(int y, int w, int n, int l, int scs, float *M
                   lly += log(prob);
               }
         }
-        lly -= log(denom_sum);
-
+        // If this is the "first" worker, then we simply keep p(z | y, w)  [assume p(H^{t-1} | z, w) = 1]
+        // otherwise we subtract off the numerator
+        if (widx > 0){
+            lly -= log(denom_sum);
+        }
     }
 
     free(worker_anno_probs);
@@ -553,7 +556,21 @@ void compute_probability_of_prior_responses(int n, int l, int scs, float *M, flo
         // scale each column by the probability of the prior response so that we have p(z | y, w_j) * p(H^{t-1} | z, w_j^{t-1})
         int c;
         for(c = 0; c < n; c++){
+
+            // if (y == 49 && c == 104){
+            //     printf("p(z=104 | z_j=49, w_j) * p(H^t-2 | z=104, w_j) = %0.5f * %0.5f\n", *(leaf_prob + c), * (P + c));
+            // }
+            // if (y == 49 && c == 105){
+            //     printf("p(z=105 | z_j=49, w_j) * p(H^t-2 | z=105, w_j) = %0.5f * %0.5f\n", *(leaf_prob + c), * (P + c));
+            // }
+            // if (y == 49 && c == 106){
+            //     printf("p(z=106 | z_j=49, w_j) * p(H^t-2 | z=106, w_j) = %0.5f * %0.5f\n", *(leaf_prob + c), * (P + c));
+            // }
+            // if (y == 49 && c == 107){
+            //     printf("p(z=107 | z_j=49, w_j) * p(H^t-2 | z=107, w_j) = %0.5f * %0.5f\n", *(leaf_prob + c), * (P + c));
+            // }
             *(leaf_prob + c) = ( *(leaf_prob + c) ) * ( * (P + c) );
+
         }
 
         float prob_prior_response = *( leaf_prob + z_prev);
