@@ -313,6 +313,17 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
         #
         #########################
 
+        #########################
+        # Find nodes in the taxonomy with only a single child and create a datastructure that
+        # will set the skills of these nodes to 1 (since there is no ambiguity of which child to choose)
+        skill_vector_indices_with_perfect_skill = []
+        for node in self.taxonomy.inner_nodes():
+           if len(node.children) == 1:
+                node_integer_id = self.orig_node_key_to_integer_id[node.key]
+                node_skill_vector_index = self.internal_node_integer_id_to_skill_vector_index[node_integer_id]
+                skill_vector_indices_with_perfect_skill.append(node_skill_vector_index)
+        self.skill_vector_indices_with_perfect_skill = np.array(skill_vector_indices_with_perfect_skill)
+        self.encode_exclude['skill_vector_indices_with_perfect_skill'] = True
 
         #########################
         # The following data structures are used to compute p(z | y, w) using
@@ -487,6 +498,7 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
 
         # Construct a vector holding the default skill priors for a worker
         self.default_skill_vector = np.ones(self.taxonomy.num_inner_nodes, dtype=np.float32) * self.prob_correct
+        self.default_skill_vector[self.skill_vector_indices_with_perfect_skill] = 0.99999
         self.pooled_prob_correct_vector = np.ones(self.taxonomy.num_inner_nodes, dtype=np.float32) * self.prob_correct_prior
         self.encode_exclude['default_skill_vector'] = True
         self.encode_exclude['pooled_prob_correct_vector'] = True
@@ -1044,13 +1056,26 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         # Tack on the class priors
         class_log_likelihoods = lls + np.log(class_priors)
 
-        # if self.id == "4892227":
+        # if self.id == "13710142": #"4892227": "8071298": #
+
+        #     print "Worker labels"
+        #     for anno in self.z.itervalues():
+        #         print "%s labeled it as %d (key=%s) (%s leaf)" % (str(anno.worker.id), self.params.orig_node_key_to_integer_id[anno.label] - 1, anno.label, "IS" if self.params.taxonomy.nodes[anno.label].is_leaf else "NOT")
+
         #     #print np.argmax(class_log_likelihoods)
         #     print "ML prediction: %d" % (self.params.leaf_integer_ids[np.argmax(class_log_likelihoods)] - 1,)
         #     print "ML log likelihood: %0.5f" % lls[np.argmax(class_log_likelihoods)]
         #     print "ML class prior: %0.5f" % np.log(class_priors)[np.argmax(class_log_likelihoods)]
+
         #     l = worker_labels[0] # we already subtracted one above
         #     l_node_list = self.params.root_to_node_path_list[l + 1]
+        #     print "Taxonomy Info for worker label"
+        #     print "Path to worker label %d" % l, l_node_list
+        #     print "Num siblings for worker label: %d" % num_siblings[l]
+        #     #print "Sibling Int Ids:", [sid for sid in range(M_offset_indices[l], M_offset_indices[l] + num_siblings[l])]
+        #     #print [self.params.integer_id_to_orig_node_key[sid + 1] for sid in range(M_offset_indices[l], M_offset_indices[l] + num_siblings[l])]
+        #     #print [self.params.integer_id_to_orig_node_key[sid] for sid in range(M_offset_indices[l], M_offset_indices[l] + num_siblings[l])]
+
         #     print "Worker skill data M: (siblings to label)"
         #     for wid in range(num_workers):
         #         print ["%0.5f" % x for x in M[wid][M_offset_indices[l]:M_offset_indices[l] + num_siblings[l]].tolist()]
@@ -1059,13 +1084,22 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         #     for w in range(num_workers):
         #         print ["%0.5f" % N[w][a - 1] for a in l_node_list[1:]]
 
+        #     node = self.params.taxonomy.nodes[anno.label]
+        #     if not node.is_leaf:
+        #         print "Children info of worker label"
+        #         for child_node in node.children.values():
+        #             print "Child key %s, int id %d" % (child_node.key, self.params.orig_node_key_to_integer_id[child_node.key])
+
         #     arg_max_index = np.argmax(class_log_likelihoods)
         #     pred_y_integer_id = self.params.leaf_integer_ids[arg_max_index]
         #     pred_y = self.params.integer_id_to_orig_node_key[pred_y_integer_id]
 
+        #     print "Predicted Node key: %s" % str(pred_y)
+        #     print "Node key path to root", [anc.key for anc in self.params.taxonomy.nodes[pred_y].ancestors]
+        #     print "Num siblings in tax: %d" % len(self.params.taxonomy.nodes[pred_y].parent.children)
         #     parent_node = self.params.taxonomy.nodes[pred_y].parent
         #     sibling_int_ids = [self.params.orig_node_key_to_integer_id[c_key] for c_key in parent_node.children]
-        #     print "Worker skill data N: (siblings to label):"
+        #     print "Worker skill data N: (siblings to prediction):"
         #     for w in range(num_workers):
         #         print ["%0.5f" % N[w][s - 1] for s in sibling_int_ids]
 
@@ -1120,7 +1154,7 @@ class CrowdImageMulticlassSingleBinomial(CrowdImage):
         self.risk = 1. - prob_y
 
         # NOTE: Debugging stuff...
-        # if self.id == "1442526":# '4267920':#'8754692':# '1112246': #
+        # if self.id == '13710142': #"1442526":# '4267920':#'8754692':# '1112246': #
         #     sort_idxs = np.argsort(class_log_likelihoods)[::-1]
         #     y_labels = self.params.leaf_integer_ids[sort_idxs]
         #     print "Predicted Label:"
@@ -1303,30 +1337,91 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
             if len(image.z) <= 1:
                 continue
 
+            # if str(self.id) == '50920' and str(image.id) == '13710142':
+            #     do_print = True
+            #     print "######"
+            # else:
+            #     do_print = False
+
             y_integer_id = self.params.orig_node_key_to_integer_id[image.y.label]
             z_integer_id = self.params.orig_node_key_to_integer_id[image.z[self.id].label]
+
+            # if str(self.id) == '50920' and y_integer_id != z_integer_id:
+            #     print "Worker %s predicted wrong on image %s" % (str(self.id), str(image.id))
+            #     print y_integer_id, z_integer_id
 
             y_node_list = self.params.root_to_node_path_list[y_integer_id]
             z_node_list = self.params.root_to_node_path_list[z_integer_id]
 
+            # if do_print:
+            #     print y_integer_id
+            #     print z_integer_id
+            #     print
+            #     print y_node_list
+            #     print z_node_list
+            #     print
+            #     print skill_counts_num
+
+            # assert len(z_node_list) > 1 # We should have removed all annotations that occur at the root
+            # assert len(y_node_list) > 1 # There should be at least one child node from the root
+
+            # Traverse the paths and update the counts.
+            # Note that we update the parent count when the children match (we always update the denom)
+            # Also note that we break out of the loop as soon as there is a mismatch, otherwise we
+            # Would be punishing a worker multiple times (or oddly punishing them for hedging their bets)
+            min_path_length = min(len(z_node_list), len(y_node_list))
+            for child_node_index in range(1, min_path_length):
+                y_node = y_node_list[child_node_index - 1]
+                y_node_skill_vector_index = internal_node_integer_id_to_skill_vector_index[y_node]
+                y_child_node = y_node_list[child_node_index]
+
+                z_node = z_node_list[child_node_index - 1]
+                z_child_node = z_node_list[child_node_index]
+
+                skill_counts_denom[y_node_skill_vector_index] += 1
+
+                if z_child_node == y_child_node:
+                    skill_counts_num[y_node_skill_vector_index] += 1
+                else:
+                    break
+
             # Traverse the paths and update the counts.
             # Note that we update the parent count when the children match
-            for child_node_index in range(1, len(y_node_list)):
-                y_parent_node = y_node_list[child_node_index - 1]
-                # update the denominator
-                skill_vector_index = internal_node_integer_id_to_skill_vector_index[y_parent_node]
-                skill_counts_denom[skill_vector_index] += 1
+            # for child_node_index in range(1, len(y_node_list)):
+            #     y_parent_node = y_node_list[child_node_index - 1]
+            #     # update the denominator
+            #     skill_vector_index = internal_node_integer_id_to_skill_vector_index[y_parent_node]
+            #     skill_counts_denom[skill_vector_index] += 1
 
-                if child_node_index < len(z_node_list):
-                    y_node = y_node_list[child_node_index]
-                    z_node = z_node_list[child_node_index]
-                    if y_node == z_node:
-                        skill_counts_num[skill_vector_index] += 1
+            #     if do_print:
+            #         print "child_node_index ", child_node_index
+            #         print "skill_vector_index ", skill_vector_index
+            #         print "skill_counts_denom[skill_vector_index]", skill_counts_denom[skill_vector_index]
+
+            #     if child_node_index < len(z_node_list):
+            #         y_node = y_node_list[child_node_index]
+            #         z_node = z_node_list[child_node_index]
+            #         if y_node == z_node:
+            #             skill_counts_num[skill_vector_index] += 1
+
+            #             if do_print:
+            #                 print "found match"
+            #                 print "skill_counts_num[skill_vector_index]", skill_counts_num[skill_vector_index]
+
+            #         else:
+            #             if do_print:
+            #                 print "found NOT match"
+            #                 print "skill_counts_num[skill_vector_index]", skill_counts_num[skill_vector_index]
+
+            #     if do_print:
+            #         print
+
 
         num = self.params.prob_correct_beta * self.params.pooled_prob_correct_vector + skill_counts_num
         denom = self.params.prob_correct_beta + skill_counts_denom
         denom = np.clip(denom, a_min=0.00000001, a_max=None)
         self.skill_vector = np.clip(num / denom, a_min=0.00000001, a_max=0.99999)
+        self.skill_vector[self.params.skill_vector_indices_with_perfect_skill] = 0.99999
 
         # Placeholder for skills
         total_num_correct = 0.
@@ -1397,18 +1492,38 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
                         z_node_list = self.params.root_to_node_path_list[z_integer_id]
 
                         # Traverse the paths and update the counts.
-                        # Note that we update the parent count when the children match
-                        for child_node_index in range(1, len(y_node_list)):
-                            y_parent_node = y_node_list[child_node_index - 1]
-                            # update the denominator
-                            skill_vector_index = internal_node_integer_id_to_skill_vector_index[y_parent_node]
-                            skill_perception_counts_denom[skill_vector_index] += 1
+                        # Note that we update the parent count when the children match.
+                        # Also note that we break out of the loop as soon as there is a mismatch, otherwise we
+                        # Would be punishing a worker multiple times (or oddly punishing them for hedging their bets)
+                        min_path_length = min(len(z_node_list), len(y_node_list))
+                        for child_node_index in range(1, min_path_length):
+                            y_node = y_node_list[child_node_index - 1]
+                            y_node_skill_vector_index = internal_node_integer_id_to_skill_vector_index[y_node]
+                            y_child_node = y_node_list[child_node_index]
 
-                            if child_node_index < len(z_node_list):
-                                y_node = y_node_list[child_node_index]
-                                z_node = z_node_list[child_node_index]
-                                if y_node == z_node:
-                                    skill_perception_counts_num[skill_vector_index] += 1
+                            z_node = z_node_list[child_node_index - 1]
+                            z_child_node = z_node_list[child_node_index]
+
+                            skill_perception_counts_denom[y_node_skill_vector_index] += 1
+
+                            if z_child_node == y_child_node:
+                                skill_perception_counts_num[y_node_skill_vector_index] += 1
+                            else:
+                                break
+
+                        # Traverse the paths and update the counts.
+                        # Note that we update the parent count when the children match
+                        # for child_node_index in range(1, len(y_node_list)):
+                        #     y_parent_node = y_node_list[child_node_index - 1]
+                        #     # update the denominator
+                        #     skill_vector_index = internal_node_integer_id_to_skill_vector_index[y_parent_node]
+                        #     skill_perception_counts_denom[skill_vector_index] += 1
+
+                        #     if child_node_index < len(z_node_list):
+                        #         y_node = y_node_list[child_node_index]
+                        #         z_node = z_node_list[child_node_index]
+                        #         if y_node == z_node:
+                        #             skill_perception_counts_num[skill_vector_index] += 1
 
                 else:
                     raise NotImplemented()
@@ -1418,6 +1533,7 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
             denom = self.params.prob_correct_beta + skill_perception_counts_denom
             denom = np.clip(denom, a_min=0.00000001, a_max=None)
             self.skill_perception_vector = np.clip(num / denom, a_min=0.00000001, a_max=0.99999)
+            self.skill_perception_vector[self.params.skill_vector_indices_with_perfect_skill] = 0.99999
 
             # At each inner node, we want to compute the probability that a worker will select a particular child node.
             # This is just a multinomial over the children
