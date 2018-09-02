@@ -96,6 +96,7 @@ class FacilityLocation():
             # alpha=cost.  Open that facility
             while len(self.fac_open_candidates) > 0:
                 # get the value of alpha that will cause this facility to open
+                #print str(self.fac_open_candidates)
                 alpha = self.fac_open_candidates[self.fac_open_candidates.smallest()]
 
                 # If alpha is greater than the current cost, then move on
@@ -114,10 +115,26 @@ class FacilityLocation():
 
         # If it happens that some cities are still not connected, then open up more facilities.
         while len(self.city_facilities) < len(self.allCities):
+
+            ###############
+            # DEBUGGING
+            # self.debug_offers()
+            # r = raw_input("enter...")
+            # END DEBUGGING
+            ##############
+
             if debug > 0:
                 print "Opening facility because some cities were unconnected"
-            alpha = self.fac_open_candidates[self.fac_open_candidates.smallest()]
+
+            facility = self.fac_open_candidates.smallest()
+            alpha = self.fac_open_candidates[facility]
+
+            min_to_open = self.facility_offers[facility][2]
+            prev_open_cities = len(self.city_facilities)
+
             self.open_facility(self.fac_open_candidates.pop_smallest(), alpha, debug)
+
+            assert len(self.city_facilities) >= prev_open_cities + min_to_open
 
         return (self.facility_cities, self.total_cost)
 
@@ -125,111 +142,106 @@ class FacilityLocation():
         """ Have the `city` offer some contribution to the `facility`
         """
 
-        # Has this city already been connected to a facility? Then we don't need to make a
+        # Is this city already connected to another facility? Then we don't need to make a
         # more expensive offer (equal to `cost`) to another facility.
         if city in self.city_facilities:
             return
 
-        # Can this city and facility be put together?
-        if (facility not in self.facility_disallowed_cities or
-            city not in self.facility_disallowed_cities[facility] or
-            self.facility_disallowed_cities[facility][city][0] <= 0):
+        # Can this city and facility be connected?
+        if self.can_facility_and_city_be_connected(facility, city):
 
-                # Offer city as a candidate connection to facility
+            # Offer city as a candidate connection to facility
+            if debug > 0:
+                print "Offer city " + str(city) + " to facility " + str(facility) + " at cost " + str(cost)
+
+            # Initialize the facility offer data structure that allows us to compute `alpha` (the price at which to open this facility)
+            if facility not in self.facility_offers:
+                self.facility_offers[facility] = [0,0,0,0]
+
+            # Add in the offer from this city
+            # `city` is unconnected, so we update t[0] and t[2]
+            # (t[1] and t[3] are for switching offers...)
+            t = self.facility_offers[facility]
+            t[0] -= cost
+            t[2] += 1
+
+            # Initialize the city offer data structure to track which facilities `city` has offers to
+            if city not in self.city_fac_offers:
+                self.city_fac_offers[city]={}
+            self.city_fac_offers[city][facility] = (cost,None,None) # This signifies the offer as an "unconnected" offer as opposed to "switching"
+
+            # Initialize the facility offer data structure to track which cities are making offers to `facility`
+            if facility not in self.fac_city_offers:
+                self.fac_city_offers[facility]={}
+            self.fac_city_offers[facility][city] = cost
+
+
+            # If this facility is already opened, then just connect the city to it.
+            if facility in self.facility_cities:
+
+                # Connect city to existing facility. This is the closest open facility
                 if debug > 0:
-                    print "Offer city " + str(city) + " to facility " + str(facility) + " at cost " + str(cost)
-
-                if facility not in self.facility_offers:
-                    # Initialize the offer
-                    self.facility_offers[facility] = [0,0,0,0]
-
-                # Add in the offer from this city
-                t = self.facility_offers[facility]
-                t[0] -= cost
-                t[2] += 1
-
-                if city not in self.city_fac_offers:
-                    self.city_fac_offers[city]={}
-                self.city_fac_offers[city][facility] = (cost,None,None)
-
-                if facility not in self.fac_city_offers:
-                    self.fac_city_offers[facility]={}
-                self.fac_city_offers[facility][city] = cost
+                    print "Connect city " + str(city) + " to existing facility " + str(facility) + " at cost " + str(cost)
+                # NOTE: connect() calls `update_disallowed_neighbors_addition`
+                self.connect(facility, city, debug)
 
 
-                # Has this facility been opened?
-                if facility in self.facility_cities:
-                    # NOTE: what can we say about additional facilities that will be opened? Is this the best
-                    # deal for the city?
+            # This facility is unopened, we need to update the `alpha` at which to open it.
+            else:
 
-                    # Connect city to existing facility. This is the closest open facility
-                    if debug > 0:
-                        print "Connect city " + str(city) + " to existing facility " + str(facility) + " at cost " + str(cost)
-                    self.connect(facility, city, debug)
+                # Update the value of `alpha` that will cause `facility` to open.
+                assert t[2] > 0, "We just made an offer, this value should be greater than 0"
+                # open_alpha = (cost of opening) - (SUM(offers from unconnected cities)) - (SUM(switching offers from connected cities)) / (SUM(number of unconnected cities with offers))
+                # The division is for computing the "cost effecitiveness" of opening the facility.
+                self.fac_open_candidates[facility] = (self.openFacilityCosts[facility]-t[0]-t[1]) / t[2]
 
-                # Is this facility unopened? Then lets update the contributions for opening it
-                else:
+                # Update which neighbors cannot be added to this facility
+                self.update_disallowed_neighbors_addition(facility, city, debug)
 
-                    # If the number of offers from unconnected cities is > 0
-                    # BUG: should this be > 0?
-                    if t[2] != 0:
-                        # Update the value of alpha that will cause this facility to open
-                        # BUG: why the division by t[2]?
-                        self.fac_open_candidates[facility] = (self.openFacilityCosts[facility]-t[0]-t[1]) / t[2]
 
-                    # Else, there are no offers from unconnected cities and we can remove this facility from the candidates to open
-                    elif facility in self.fac_open_candidates:
-                        del self.fac_open_candidates[facility]
-
-                    # Add disallowed cities `self.facility_disallowed_cities`
-                    if (self.city_disallowed_city_neighbors is not None) and (city in self.city_disallowed_city_neighbors):
-                        # Go through the disallowed neighbors
-                        for c2 in self.city_disallowed_city_neighbors[city]:
-
-                            if not isinstance(self.city_disallowed_city_neighbors[city],dict) or facility!=self.city_disallowed_city_neighbors[city][c2]:
-                                # Connecting city to facility requires that c2 can't be connected to facility
-                                if facility not in self.facility_disallowed_cities:
-                                    self.facility_disallowed_cities[facility] = {}
-                                if c2 not in self.facility_disallowed_cities[facility]:
-                                    self.facility_disallowed_cities[facility][c2] = [0,0]
-                                self.facility_disallowed_cities[facility][c2][0] += 1
-                                if debug > 0:
-                                    print "  offer " + str(city) + " disallow " + str(c2) + " from " + str(facility) + " count=" + str(self.facility_disallowed_cities[facility][c2][0])
 
         # Has a previous city disallowed this connection?
-        elif (facility in self.facility_disallowed_cities and
-              city in self.facility_disallowed_cities[facility] and
-              self.facility_disallowed_cities[facility][city][0] > 0):
-            if debug > 0:
-                print "disallowed offer city " + str(city) + " to facility " + str(facility) + " at cost " + str(cost)
-            # Store the cost of not being able to connect this city to the factory because some
-            # other disallowd neighbor is already connected. If that neighbor removes their offer
-            # to the facility, then we'll use this cost to make an offer
-            self.facility_disallowed_cities[facility][city][1] = cost
+        else:
+            if facility in self.facility_disallowed_cities and city in self.facility_disallowed_cities[facility]:
+                if self.facility_disallowed_cities[facility][city][0] > 0:
+                    if debug > 0:
+                        print "disallowed offer city " + str(city) + " to facility " + str(facility) + " at cost " + str(cost)
+                    # Store the cost of not being able to connect this city to the factory because some
+                    # other disallowd neighbor is already connected. If that neighbor removes their offer
+                    # to the facility, then we'll use this cost to make an offer
+                    self.facility_disallowed_cities[facility][city][1] = cost
+
 
     def open_facility(self, facility, alpha, debug):
         """Open a new facility and connect all candidate cities.
         """
+        assert facility not in self.facility_cities
 
         self.facility_cities[facility] = {}
         if facility not in self.facility_disallowed_cities:
             self.facility_disallowed_cities[facility] = {}
-        self.total_cost += self.openFacilityCosts[facility]
+
+        opening_cost = self.openFacilityCosts[facility]
+        self.total_cost += opening_cost
 
         if debug > 0:
-            print "Open facility " + str(facility) + " at alpha " + str(alpha) + ":"
+            print "Open facility " + str(facility) + " (open cost = " + str(opening_cost) + ") at alpha " + str(alpha) + ":"
 
-        offers = [c for c in self.fac_city_offers[facility]]
+        # Connect each offering city c to facility
         for c in self.fac_city_offers[facility]:
-            # Connect each offering city c to facility
             # c might be an unconnected city or it could be a connected city that is switching.
             self.connect(facility, c, debug)
 
         # Clear out all offers for this facility, since they were just connected
+        # BUG: is this correct?
         del self.fac_city_offers[facility]
 
+        #self.sanity_check_neighbors()
+        #self.sanity_check_offers()
+
     def connect(self, facility, c, debug):
-        """Connect facility to city c.  Assumes a connection between them has already been offered.
+        """Connect `facility` to city `c`.
+        Assumes a connection between them has already been offered.
         Assumes the facility is open.
         """
 
@@ -240,7 +252,7 @@ class FacilityLocation():
 
         # This city should not be in the disallowed cities for this facility
         if c in self.facility_disallowed_cities[facility] and self.facility_disallowed_cities[facility][c][0] > 0:
-            raise Exception("huh?")
+            raise Exception("A city is trying to connect to dissallowed facility.")
 
         # Delete this facility from the city's offers list
         del self.city_fac_offers[c][facility]
@@ -248,6 +260,9 @@ class FacilityLocation():
         # Connect the city to the facility, storing the contribution it made to the facility
         self.facility_cities[facility][c] = c_ip_j
         self.total_cost += c_ip_j
+
+        # Keep a list of all the facilities that need to be updated for neighbor removal
+        update_facilities_for_disallowed_neighbor_removal = []
 
         if c in self.city_facilities:
             # If c is already connected to a facility f, we must switch it
@@ -258,77 +273,195 @@ class FacilityLocation():
             del self.facility_cities[f][c]
             del self.city_facilities[c]
 
-        self.city_facilities[c] = facility
+            # It will never be advantageous to switch back to `f`
+            # So we do not need to update `city_fac_offers` (and `f` should not be in `self.city_fac_offers[c]`)
+            assert f not in self.city_fac_offers[c], "`c` should not have an offer out to an opened facility"
 
-        # c is now "connected" and we need to update the offers it has made to other facilities.
+            # We do need to update the disallowed city list for `f`
+            update_facilities_for_disallowed_neighbor_removal.append(f)
+
+
+        self.city_facilities[c] = facility
+        self.update_disallowed_neighbors_addition(facility, c, debug)
+
+
+        # The following loop is used to update `c`'s offer to all the other facilities.
+        # For each facility, we first subtract `c`'s previous offer and then add back in the new offer.
+
+        # city_fac_offers[c][f] = [cost, None, None] by default
+        # city_fac_offers[c][f] = [cost, f, savings]
         bad = [] # collect the facilities that this city will never connect to (now that it is connected to `facility`)
         for f in self.city_fac_offers[c]:
+
+            assert f != facility, "This should never be the case since we just deleted `facility` from `self.city_fac_offers[c]`"
+
             # Update the offers of city c to switch to other unopened facilities
             c_i_j = self.fac_city_offers[f][c] # get the contribution made by c to f
             t = self.facility_offers[f] # get the total contributions for f
 
-            # Removing the offer
+            # Prep the `t` variable for updating by removing the contribution of `c`
+            # The subsequent code block adds the updated offer back in
             if self.city_fac_offers[c][f][1] is not None:
                 # NOTE: this is the swith case
+                # We've already been in this loop and have updated the offer to a switch offer
+                # So we need to remove the contribution to t[1] and decrement t[3]
                 t[1] += self.city_fac_offers[c][f][2]  # remove c from sum offers to connect unconnected cities to f
                 t[3] -= 1             # number of offers to connect unconnected cities to f
-                if t[3] < 0 and debug > 1:
+                if t[3] < 0 and debug > 1: # Should never decrement below 0
                     raise Exception("huh?")
             else:
                 # NOTE: this is the unconnected case
+                # This city made an offer to the facility when it was still unconnected.
+                # So to update t, we need to remove the contribution to t[0], and decrement t[1]
+                # In the next code block we'll be changing the offer to a switch offer
                 t[0] += c_i_j         # remove c from sum switch offers
                 t[2] -= 1             # number of switch
-                if t[2] < 0 and debug > 1:
+                if t[2] < 0 and debug > 1: # Should never decrement below 0
                     raise Exception("huh?")
 
-            # Adding the offer, this will update the switch offer.
-            if (f not in self.facility_cities) and (c_i_j < c_ip_j):
-                if (f not in self.facility_disallowed_cities or
-                    c not in self.facility_disallowed_cities[f] or
-                    self.facility_disallowed_cities[f][c][0] <= 0):
-                    if debug > 0:
-                        print "    offer switch from facility " + str(facility) + "("+str(c_ip_j)+ ") to " + str(f) + "(" + str(c_i_j)+") for city " + str(c)
-                    t[1] += c_ip_j-c_i_j  # sum offers to switch connections of already connected cities to f
-                    t[3] += 1             # number of offers to switch connections of already connected cities to f
-                    self.city_fac_offers[c][f] = (c_i_j,f,c_i_j-c_ip_j)
-                    if (self.city_disallowed_city_neighbors is not None) and (c in self.city_disallowed_city_neighbors):
-                        for c2 in self.city_disallowed_city_neighbors[c]:
-                            if not isinstance(self.city_disallowed_city_neighbors[c],dict) or facility!=self.city_disallowed_city_neighbors[c][c2]:
-                                # Connecting city to facility requires that c2 can't be connected to facility
-                                if f not in self.facility_disallowed_cities:
-                                    self.facility_disallowed_cities[f] = {}
-                                if c2 not in self.facility_disallowed_cities[f]:
-                                    self.facility_disallowed_cities[f][c2] = [0,0]
-                                self.facility_disallowed_cities[f][c2][0] += 1
-                                if debug > 0:
-                                    print "  offer switch " + str(c) + " disallow " + str(c2) + " from " + str(f) + " count=" + str(self.facility_disallowed_cities[f][c2][0])
+            # The switch offer of `c` to `f` is now the savings that would occur by switching from `facility` to `f`
+            switch_offer = c_ip_j - c_i_j
+            make_switch_offer = True
+
+            # If `f` has already been opened, but `c` was connected to `facility` instead, then it will never be better to connect to `f`
+            if f in self.facility_cities:
+                make_switch_offer = False
+
+            # If the `switching_offer` is negative, then it will never be better to connect `c` to `f`
+            if switch_offer < 0:
+                make_switch_offer = False
+
+            # Is `c` in the disallowed list for `f`? If so, don't make a switch offer.
+            if f in self.facility_disallowed_cities and c in self.facility_disallowed_cities[f]:
+                if self.facility_disallowed_cities[f][c][0] > 0: # some other offer is preventing `c`
+                    make_switch_offer = False
+
+            if make_switch_offer:
+                if debug > 0:
+                    print "    offer switch from facility " + str(facility) + "("+str(c_ip_j)+ ") to " + str(f) + "(" + str(c_i_j)+") for city " + str(c)
+
+                # Add the offer to switch to the `facility_offers[f]` data structure
+                t[1] += switch_offer  # sum offers to switch connections of already connected cities to f
+                t[3] += 1             # number of offers to switch connections of already connected cities to f
+
+                # Update `city_fac_offers` to reflect that we are now making a switching offer (as opposed to an un-connected offer)
+                self.city_fac_offers[c][f] = (c_i_j,f,c_i_j-c_ip_j)
+
+            # `c` will never be matched to `f`
             else:
-                # This city won't ever be matched to this facility
+                # Add `f` to the list of factories `c` will never connect to.
                 bad.append(f)
+                update_facilities_for_disallowed_neighbor_removal.append(f)
 
-                # We can go back and allow some of the neighbors to make offers to this facility
-                if (self.city_disallowed_city_neighbors is not None) and (c in self.city_disallowed_city_neighbors) and f != facility:
-                    for c2 in self.city_disallowed_city_neighbors[c]:
-                        if c2 in self.facility_disallowed_cities[f]:
-                            self.facility_disallowed_cities[f][c2][0] -= 1
+            # Regardless of whether we made a switch offer, make sure to update the alpha value that will open this facility.
+            # If there are no unconnected cities making an offer, then set alpha to a big number
+            if t[2] > 0:
+                self.fac_open_candidates[f] = (self.openFacilityCosts[f]-t[0]-t[1]) / t[2]
+            else:
+                self.fac_open_candidates[f] = np.inf #self.big
 
-                            # Have all disallowed neighbors been unconnected from this facility?
-                            # And did this city make an offer to the facility?
-                            # And is this city not already connected?
-                            if self.facility_disallowed_cities[f][c2][0] == 0 and self.facility_disallowed_cities[f][c2][1] != 0 and c2 not in self.city_facilities:
-                                if debug > 0:
-                                    print "  undisallow " + str(c2) + " from " + str(f) + " ( "+str(c)+" was connected) cost=" + str(self.facility_disallowed_cities[f][c2][1])
-                                self.offer(c2, f, self.facility_disallowed_cities[f][c2][1], debug)
-
-            # If this facility is not open, then update the alpha value that will open it.
-            if f not in self.facility_cities:
-                # If there are no unconnected cities making an offer, then set alpha to a big number
-                self.fac_open_candidates[f] = (self.openFacilityCosts[f]-t[0]-t[1]) / t[2] if t[2] > 0 else self.big
-
-        # Remove city from all factories that it won't ever connect to.
+        # Remove `c` from all factories `f` that it will never connect to
         for f in bad:
             del self.fac_city_offers[f][c]
             del self.city_fac_offers[c][f]
+
+        # Update which neighbors can now connect / make offers to f
+        for f in update_facilities_for_disallowed_neighbor_removal:
+            self.update_disallowed_neighbors_removal(f, c, debug)
+
+
+    def can_facility_and_city_be_connected(self, facility, city):
+
+        can_be_connected = True
+        if facility in self.facility_disallowed_cities:
+            if city in self.facility_disallowed_cities[facility]:
+                # Is there some other city preventing `city` from being connected to `facility`?
+                if self.facility_disallowed_cities[facility][city][0] > 0:
+                   can_be_connected = False
+
+        return can_be_connected
+
+
+    def update_disallowed_neighbors_addition(self, facility, added_city, debug):
+        """ Update which cities cannot make offers to `facility` now that `added_city` has made an offer / is connected.
+        """
+
+        if (self.city_disallowed_city_neighbors is not None) and (added_city in self.city_disallowed_city_neighbors):
+
+            # Go through the disallowed neighbors
+            for c2 in self.city_disallowed_city_neighbors[added_city]:
+
+                # The value for `self.city_disallowed_city_neighbors[c1][c2]` is traditionally `-1`
+                dummy_facility = self.city_disallowed_city_neighbors[added_city][c2]
+
+                # NOTE: could make this more generic in the future
+                assert type(dummy_facility) is int, "Invalid type for `city_disallowed_city_neighbors[c1][c2] value"
+
+                # A bit of a hack: it is okay for these cities to share the dummy facility....
+                if facility != dummy_facility:
+
+                    # Connecting `added_city` to `facility` requires that `c2` can not be connected to `facility`
+                    if facility not in self.facility_disallowed_cities:
+                        self.facility_disallowed_cities[facility] = {}
+                    if c2 not in self.facility_disallowed_cities[facility]:
+                        self.facility_disallowed_cities[facility][c2] = [0,0]
+                    self.facility_disallowed_cities[facility][c2][0] += 1
+                    if debug > 0:
+                        print "  offer " + str(added_city) + " disallow " + str(c2) + " from " + str(facility) + " count=" + str(self.facility_disallowed_cities[facility][c2][0])
+
+
+    def update_disallowed_neighbors_removal(self, facility, removed_city, debug):
+        """ Update which cities can make offers to `facility` now that `removed_city` is gone.
+        """
+        if (self.city_disallowed_city_neighbors is not None) and (removed_city in self.city_disallowed_city_neighbors):
+
+            for c2 in self.city_disallowed_city_neighbors[removed_city]:
+
+                if c2 in self.facility_disallowed_cities[facility]:
+
+                    self.facility_disallowed_cities[facility][c2][0] -= 1
+
+                    # Have all disallowed neighbors for `c2` been unconnected from `f`?
+                    if self.facility_disallowed_cities[facility][c2][0] == 0:
+                        # Does `c2` have an offer to `f`?
+                        if self.facility_disallowed_cities[facility][c2][1] != 0:
+                            # Is `c2` not already connected to another facility?
+                            if c2 not in self.city_facilities:
+                                if debug > 0:
+                                    print "  undisallow " + str(c2) + " from " + str(facility) + " ( "+str(removed_city)+" was connected) cost=" + str(self.facility_disallowed_cities[facility][c2][1])
+                                # Have `c2` make an offer to `f`
+                                self.offer(c2, facility, self.facility_disallowed_cities[facility][c2][1], debug)
+
+    def sanity_check_neighbors(self):
+        # Sanity check the disallowed neighbors
+        if self.city_disallowed_city_neighbors is not None:
+            # Go through the current assignments
+            for facility, cities in self.facility_cities.items():
+                # Skip the dummy facility
+                if facility == -1:
+                    continue
+                # Go through each city and ensure that none of the other connected cities are in it's disallowed list
+                for c1 in cities:
+                    if c1 in self.city_disallowed_city_neighbors:
+                        for c2 in cities:
+                            if c1 == c2:
+                                continue
+                            assert c2 not in self.city_disallowed_city_neighbors[c1], "Disallowed cities are connected %d & %d in fac %d." % (c1, c2, facility)
+
+    def sanity_check_offers(self):
+
+        for city, facility in self.city_facilities.items():
+
+            c_ip_j = self.facility_cities[facility][city]
+
+            for f in self.city_fac_offers[city]:
+
+                assert f != facility, "This should never be the case since we just deleted `facility` from `self.city_fac_offers[c]`"
+
+                # Update the offers of city c to switch to other unopened facilities
+                c_i_j = self.fac_city_offers[f][city]
+
+                assert c_ip_j >= c_i_j
 
     def compute_costs(self, type='euclidean'):
         """ Compute the pairwise distance between the points and use them as the cost
@@ -342,13 +475,101 @@ class FacilityLocation():
         self.costs_s = None
 
     def debug_offers(self):
+
+        print "#############################"
+        print "DEBUG OFFERS"
+        print "%d facilities are open" % (len(self.facility_cities),)
+        print "%d / %d cities are connected" % (len(self.city_facilities), len(self.allCities))
+
         print ""
-        print "--facility_cities " + str(self.facility_cities)
-        print "--city_facilities " + str(self.city_facilities)
-        print "--fac_open_candidates " + str(self.fac_open_candidates)
-        print "--fac_city_offers " + str(self.fac_city_offers)
-        print "--city_fac_offers " + str(self.city_fac_offers)
-        print "--facility_offers " + str(self.facility_offers)
+        print "#############################"
+        print "START --facility_cities "# + str(self.facility_cities)
+        #print self.facility_cities
+        fc = self.facility_cities.items()
+        fc.sort(key=lambda x: x[0])
+        for facility, cities in fc:
+            cc = cities.items()
+            cc.sort(key=lambda x: x[0])
+            print "Facility %d is connect to %d cities" % (facility, len(cc))
+            for city, cost in cc:
+                print "\t%d at cost %0.3f" % (city, cost)
+        print "END --facility_cities "
+        print "#############################"
+        print
+        print "#############################"
+        print "START --city_facilities "# + str(self.city_facilities)
+        #print self.city_facilities
+        cf = self.city_facilities.items()
+        cf.sort(key=lambda x: x[0])
+        for city, facility in cf:
+            print "City %d connected to Facility %d" % (city, facility)
+        print "END --facility_cities "
+        print "#############################"
+        print
+        print "#############################"
+        print "START --fac_open_candidates " #+ str(self.fac_open_candidates)
+        #print self.fac_open_candidates
+        fa = self.fac_open_candidates.items()
+        fa.sort(key=lambda x: x[1])
+        for facility, alpha in fa:
+            unopened = self.facility_offers[facility][2]
+            switches = self.facility_offers[facility][3]
+            assert len(self.fac_city_offers[facility]) == (unopened + switches)
+            print "Facility %d can open with alpha %0.3f (connecting %d cities (%d unopened and %d switches))" % (facility, alpha, len(self.fac_city_offers[facility]), unopened, switches)
+        print "END --fac_open_candidates "
+        print "#############################"
+        print
+        # print "#############################"
+        # print "START --fac_city_offers " #+ str(self.fac_city_offers)
+        # #print self.fac_city_offers
+        # fc = self.fac_city_offers.items()
+        # fc.sort(key=lambda x: x[0])
+        # for facility, offers in fc:
+        #     co = offers.items()
+        #     co.sort(key=lambda x: x[0])
+        #     print "Facility %d has offers from %d cities:" % (facility, len(co))
+        #     for city, offer in co:
+        #         print "\tCity %d with offer %0.3f" % (city, offer)
+        # print "END --fac_city_offers "
+        # print
+        # print "#############################"
+        # print "START --city_fac_offers " #+ str(self.city_fac_offers)
+        # #print self.city_fac_offers
+        # co = self.city_fac_offers.items()
+        # co.sort(key=lambda x: x[0])
+        # for city, offers in co:
+        #     fo = offers.items()
+        #     fo.sort(key=lambda x: x[0])
+        #     print "City %d has offers to %d facilities:" % (city, len(fo))
+        #     for facility, (offer, f, diff) in fo:
+        #         print ("\tFacility %d with offer %0.3f" % (facility, offer)) + (" (diff is %0.3f to %d)" % (diff, f) if diff is not None else "")
+        # print "END --city_fac_offers "
+        # print "#############################"
+        # print
+        # print "#############################"
+        # print "START --facility_offers " #+ str(self.facility_offers)
+        # #print self.facility_offers
+        # fo = self.facility_offers.items()
+        # fo.sort(key=lambda x: x[0])
+        # for facility, (s1, s2, n1, n2) in fo:
+        #     print "Facility %d offer: [%0.3f, %0.3f, %d, %d]" % (facility, s1, s2, n1, n2)
+        # print "END --facility_offers "
+        # print "#############################"
+        # print
+        # print "#############################"
+        # print "START --facility_disallowed_cities" #+ str(self.facility_disallowed_cities)
+        # #print self.facility_disallowed_cities
+        # fc = self.facility_disallowed_cities.items()
+        # fc.sort(key=lambda x: x[0])
+        # for facility, cities in fc:
+        #     cc = cities.items()
+        #     cc.sort(key=lambda x: x[0])
+        #     print "Facility %d cannot be connected to %d cities:" % (facility, len(cc))
+        #     for city, (num_against, cost) in cc:
+        #         print "\t City %d, due to %d other cities, costing %0.3f" % (city, num_against, cost)
+        # print "END --facility_disallowed_cities"
+        # print "#############################"
+
 
 # Taken from http://code.activestate.com/recipes/522995-priority-dict-a-priority-queue-with-updatable-prio/
 import heapq
@@ -444,15 +665,31 @@ from numpy import concatenate
 import matplotlib.pyplot as plt
 import math
 def test_facility_location(numPts=20, ptDim=2, openCosts=None, p1=None, p2=None):
+    """ Visualize the facility location solution.
+    """
+    # We'll run the experiment with various opening costs
     if openCosts is None:
         openCosts = [1,2,4,8,16,32,64,128,256]
-        for i in range(0,len(openCosts)): openCosts[i] *= numPts/20.0
+        for i in range(0,len(openCosts)):
+            openCosts[i] *= numPts/20.0
+
+    # Generate some data points biased towards the top right
+    if p1 is None:
+        p1 = 2.5 * np.random.randn(numPts, ptDim) + 3
+
+    # Generate some data points biased towards the bottom left
+    if p2 is None:
+        p2 = 2.5 * np.random.randn(numPts, ptDim) + -3
+    p = np.concatenate((p1,p2))
+
+
+    fac = FacilityLocation(points=p)
+
+
+
     w = math.ceil(math.sqrt(len(openCosts)))
     fig = plt.figure()
-    if p1 is None: p1 = 2.5 * np.random.randn(numPts, ptDim) + 3
-    if p2 is None: p2 = 2.5 * np.random.randn(numPts, ptDim) + -3
-    p = np.concatenate((p1,p2))
-    fac = FacilityLocation(points=p)
+
     for n in range(0,len(openCosts)):
         [facilities,cost]=fac.solve(openFacilityCost=openCosts[n])
         ax = fig.add_subplot(100*w + 10*w + n+1)
@@ -461,6 +698,8 @@ def test_facility_location(numPts=20, ptDim=2, openCosts=None, p1=None, p2=None)
         for i in facilities:
             for j in facilities[i]:
                 ax.plot([p[i,0],p[j,0]], [p[i,1],p[j,1]], 'g')
-        ax.set_title('openCost='+str(openCosts[n]) + " totalCost="+str(cost))
+                ax.axes.get_xaxis().set_ticks([])
+                ax.axes.get_yaxis().set_ticks([])
+        ax.set_title('openCost=%0.3f totalCost=%0.3f' % (openCosts[n], cost) )
     fig.show()
     return (p1,p2)
