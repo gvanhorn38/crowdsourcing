@@ -498,7 +498,8 @@ class CrowdDatasetMulticlassSingleBinomial(CrowdDataset):
 
         # Construct a vector holding the default skill priors for a worker
         self.default_skill_vector = np.ones(self.taxonomy.num_inner_nodes, dtype=np.float32) * self.prob_correct
-        self.default_skill_vector[self.skill_vector_indices_with_perfect_skill] = 0.99999
+        if self.skill_vector_indices_with_perfect_skill.shape[0] > 0:
+            self.default_skill_vector[self.skill_vector_indices_with_perfect_skill] = 0.99999
         self.pooled_prob_correct_vector = np.ones(self.taxonomy.num_inner_nodes, dtype=np.float32) * self.prob_correct_prior
         self.encode_exclude['default_skill_vector'] = True
         self.encode_exclude['pooled_prob_correct_vector'] = True
@@ -1421,7 +1422,8 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
         denom = self.params.prob_correct_beta + skill_counts_denom
         denom = np.clip(denom, a_min=0.00000001, a_max=None)
         self.skill_vector = np.clip(num / denom, a_min=0.00000001, a_max=0.99999)
-        self.skill_vector[self.params.skill_vector_indices_with_perfect_skill] = 0.99999
+        if self.params.skill_vector_indices_with_perfect_skill.shape[0] > 0:
+            self.skill_vector[self.params.skill_vector_indices_with_perfect_skill] = 0.99999
 
         # Placeholder for skills
         total_num_correct = 0.
@@ -1533,7 +1535,8 @@ class CrowdWorkerMulticlassSingleBinomial(CrowdWorker):
             denom = self.params.prob_correct_beta + skill_perception_counts_denom
             denom = np.clip(denom, a_min=0.00000001, a_max=None)
             self.skill_perception_vector = np.clip(num / denom, a_min=0.00000001, a_max=0.99999)
-            self.skill_perception_vector[self.params.skill_vector_indices_with_perfect_skill] = 0.99999
+            if self.params.skill_vector_indices_with_perfect_skill.shape[0] > 0:
+                self.skill_perception_vector[self.params.skill_vector_indices_with_perfect_skill] = 0.99999
 
             # At each inner node, we want to compute the probability that a worker will select a particular child node.
             # This is just a multinomial over the children
